@@ -65,6 +65,10 @@
 #include "itkRegionGrowImageFilter.h"
 #include "itkNeighborhoodConnectedImageFilter.h"
 
+#include "itkScalarImageToHistogramGenerator.h"
+
+#include <itkOtsuMultipleThresholdsCalculator.h>
+
 #include "vector"
 
 using PixelType = short;
@@ -92,7 +96,16 @@ typedef itk::OtsuMultipleThresholdsImageFilter <ImageType, ImageType> OtsuFilter
 typedef itk::RegionGrowImageFilter<ImageType, ImageType> RegionGrowImageFilterType;
 typedef itk::NeighborhoodConnectedImageFilter<ImageType, ImageType > ConnectedFilterType;
 
+using ScalarImageToHistogramGeneratorType = itk::Statistics::ScalarImageToHistogramGenerator<ImageType>;
+using HistogramType = ScalarImageToHistogramGeneratorType::HistogramType;
 
+using CalculatorType = itk::OtsuMultipleThresholdsCalculator<HistogramType>;
+
+CalculatorType::OutputType otusHist(ScalarImageToHistogramGeneratorType::Pointer input);
+
+OtsuFilterType::ThresholdVectorType otusImg(ReaderType::Pointer input);
+template<class MyType>
+ScalarImageToHistogramGeneratorType::Pointer normalize(MyType input);
 
 
 bool circle_itersect(double x1, double y1, double r1, double x2, double y2, double r2) {
@@ -169,7 +182,7 @@ void corrigate_circles(std::vector<CirclesListType> &circles_list) {
         if (!circle_itersect((*itCircles)->GetObjectToParentTransform()->GetOffset()[0], (*itCircles)->GetObjectToParentTransform()->GetOffset()[1], (*itCircles)->GetRadius()[0],
             av_x, av_y, av_rad)) {
 
-            std::cout << "CORRIGATE NEEDED " << std::endl;
+            // std::cout << "CORRIGATE NEEDED " << std::endl;
 
             bool has_inter = false;
             int min_dist = 99999999;
@@ -204,9 +217,9 @@ void corrigate_circles(std::vector<CirclesListType> &circles_list) {
                 //}
             }
 
-            if (!has_inter) {
-                std::cout << "NO BETTER CIRCLE FOUND" << std::endl;
-            }
+            //if (!has_inter) {
+            //    std::cout << "NO BETTER CIRCLE FOUND" << std::endl;
+            //}
 
             // MEDIAN METHOD!
             // ///////////////////////////////////////////
@@ -399,7 +412,7 @@ MyType do_hough_on_image(MyType input, MyType2 &original, bool keep_only_inside,
     //
     //  Software Guide : EndLatex
     // Software Guide : BeginCodeSnippet
-    std::cout << "Computing Hough Map on slice: " << actual_slice_number << std::endl;
+    // TODO: std::cout << "Computing Hough Map on slice: " << actual_slice_number << std::endl;
 
     HoughTransformFilterType::Pointer houghFilter
         = HoughTransformFilterType::New();
@@ -459,7 +472,7 @@ MyType do_hough_on_image(MyType input, MyType2 &original, bool keep_only_inside,
     // Software Guide : BeginCodeSnippet
     HoughTransformFilterType::CirclesListType circles;
     circles = houghFilter->GetCircles();
-    std::cout << "Found " << circles.size() << " circle(s)." << std::endl;
+    // TODO: std::cout << "Found " << circles.size() << " circle(s)." << std::endl;
     // Software Guide : EndCodeSnippet
     //  Software Guide : BeginLatex
     //
@@ -489,10 +502,10 @@ MyType do_hough_on_image(MyType input, MyType2 &original, bool keep_only_inside,
     CirclesListType::const_iterator itCircles = circles.begin();
     while (itCircles != circles.end())
     {
-        std::cout << "Center: ";
-        std::cout << (*itCircles)->GetObjectToParentTransform()->GetOffset()
-            << std::endl;
-        std::cout << "Radius: " << (*itCircles)->GetRadius()[0] << std::endl;
+        // TODO: std::cout << "Center: ";
+        // TODO: std::cout << (*itCircles)->GetObjectToParentTransform()->GetOffset()
+        // TODO:     << std::endl;
+        // TODO: std::cout << "Radius: " << (*itCircles)->GetRadius()[0] << std::endl;
 
         if (!keep_only_inside)
         {
@@ -924,16 +937,11 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
 
     // RIB SEARCH
     std::cout << "Thresholding for ribs" << std::endl;
-    OtsuFilterType::Pointer otsuFilter = OtsuFilterType::New();
-    otsuFilter = OtsuFilterType::New();
-    otsuFilter->SetInput(reader_ribs->GetOutput());
-    otsuFilter->SetNumberOfThresholds(4);
-    otsuFilter->Update(); // To compute threshold
 
     using FilterType = itk::BinaryThresholdImageFilter< ImageType, ImageType >;
     FilterType::Pointer threshFilter = FilterType::New();
-    OtsuFilterType::ThresholdVectorType thresholds = otsuFilter->GetThresholds();
-    thresholds = otsuFilter->GetThresholds();
+    OtsuFilterType::ThresholdVectorType thresholds;
+    thresholds = otusHist(normalize(reader_ribs));
     for (unsigned int i = 0; i < thresholds.size(); i++)
     {
         std::cout << thresholds[i] << std::endl;
@@ -941,12 +949,13 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
 
     threshFilter = FilterType::New();
     threshFilter->SetInput(reader_ribs->GetOutput());
-    if (thresholds[3] > 1000) {
-        threshFilter->SetLowerThreshold(thresholds[2]);
-    }
-    else {
-        threshFilter->SetLowerThreshold(thresholds[3]);
-    }
+    //if (thresholds[3] > 1000) {
+    //    threshFilter->SetLowerThreshold(thresholds[2]);
+    //}
+    //else {
+    //    threshFilter->SetLowerThreshold(thresholds[3]);
+    
+    threshFilter->SetLowerThreshold(thresholds[0]);
     threshFilter->SetUpperThreshold(10000);
     threshFilter->SetOutsideValue(0);
     threshFilter->SetInsideValue(1);
@@ -1075,14 +1084,14 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
                         seed_l[0]++;
                         //neighborhoodConnected->AddSeed(seed_l);
                         seed_vec_l.push_back(seed_l);
-                        std::cout << "SEEDADDED2_l " << seed_l[2] << std::endl;
-                        std::cout << "SEEDADDED0_l " << seed_l[0] << std::endl;
-                        std::cout << "SEEDADDED1_l " << seed_l[1] << std::endl;
-                        std::cout << "-----------------" << std::endl;
+                        // TODO: std::cout << "SEEDADDED2_l " << seed_l[2] << std::endl;
+                        // TODO: std::cout << "SEEDADDED0_l " << seed_l[0] << std::endl;
+                        // TODO: std::cout << "SEEDADDED1_l " << seed_l[1] << std::endl;
+                        // TODO: std::cout << "-----------------" << std::endl;
                         there_was_a_seed_before = true;
                         num_of_ribs--;
 
-                        std::cout << "DIST: " << seed_l[2] - old_seed_z << std::endl;
+                        // TODO: std::cout << "DIST: " << seed_l[2] - old_seed_z << std::endl;
                         // std::cout << "x: " << x << std::endl;
 
                         // REPOZITIONING
@@ -1138,14 +1147,14 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
                         seed_r[0]--;
                         // neighborhoodConnected->AddSeed(seed_r);
                         seed_vec_r.push_back(seed_r);
-                        std::cout << "SEEDADDED0_r " << seed_r[0] << std::endl;
-                        std::cout << "SEEDADDED1_r " << seed_r[1] << std::endl;
-                        std::cout << "SEEDADDED2_r " << seed_r[2] << std::endl;
-                        std::cout << "-----------------" << std::endl;
+                        // TODO: std::cout << "SEEDADDED0_r " << seed_r[0] << std::endl;
+                        // TODO: std::cout << "SEEDADDED1_r " << seed_r[1] << std::endl;
+                        // TODO: std::cout << "SEEDADDED2_r " << seed_r[2] << std::endl;
+                        // TODO: std::cout << "-----------------" << std::endl;
                         there_was_a_seed_before_r = true;
                         num_of_ribs_r--;
                 
-                        std::cout << "DIST: " << seed_r[2] - old_seed_r_z << std::endl;
+                        // TODO: std::cout << "DIST: " << seed_r[2] - old_seed_r_z << std::endl;
                 
                        // old_seed_r_z = seed_r[2];
                        // if (actual_pixel_intesity != 0) {
@@ -1427,33 +1436,104 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
 }
 
 template<class MyType>
-void normalize(MyType input) {
-    ImageType::IndexType index3d;
-    for (int x = 0; x < input->GetOutput()->GetBufferedRegion().GetSize()[0]; x++) {
-        for (int y = 0; y < input->GetOutput()->GetBufferedRegion().GetSize()[1]; y++) {
-            for (int z = 0; z < input->GetOutput()->GetBufferedRegion().GetSize()[2]; z++) {
-                index3d[0] = x;
-                index3d[1] = y;
-                index3d[2] = z;
+ScalarImageToHistogramGeneratorType::Pointer normalize(MyType input) {
 
-                PixelType pix = input->GetOutput()->GetPixel(index3d);
+    ScalarImageToHistogramGeneratorType::Pointer scalarImageToHistogramGenerator = ScalarImageToHistogramGeneratorType::New();
 
-                if (pix < -1024) {
-                    input->GetOutput()->SetPixel(index3d, -1024);
-                }
-                if (pix > 3071) {
-                    input->GetOutput()->SetPixel(index3d, 3071);
-                }
-            }
-        }
-    }
+
+
+    scalarImageToHistogramGenerator->SetHistogramMin(0);
+    scalarImageToHistogramGenerator->SetHistogramMax(1000);
+    scalarImageToHistogramGenerator->SetAutoHistogramMinimumMaximum(false);
+    scalarImageToHistogramGenerator->SetInput(input->GetOutput());
+    scalarImageToHistogramGenerator->SetNumberOfBins(50);
+    scalarImageToHistogramGenerator->Compute();
+
+    return scalarImageToHistogramGenerator;
+
+    // ImageType::IndexType index3d;
+    // for (int x = 0; x < input->GetOutput()->GetBufferedRegion().GetSize()[0]; x++) {
+    //     for (int y = 0; y < input->GetOutput()->GetBufferedRegion().GetSize()[1]; y++) {
+    //         for (int z = 0; z < input->GetOutput()->GetBufferedRegion().GetSize()[2]; z++) {
+    //             index3d[0] = x;
+    //             index3d[1] = y;
+    //             index3d[2] = z;
+    // 
+    //             PixelType pix = input->GetOutput()->GetPixel(index3d);
+    // 
+    //             if (pix < -1000) {
+    //                 input->GetOutput()->SetPixel(index3d, -1000);
+    //             }
+    //             if (pix > 1000) {
+    //                 input->GetOutput()->SetPixel(index3d, 1000);
+    //             }
+    //         }
+    //     }
+    // }
 }
+
+
+CalculatorType::OutputType otusHist(ScalarImageToHistogramGeneratorType::Pointer input) {
+
+    //OtsuFilterType::Pointer otsuFilter = OtsuFilterType::New();
+    CalculatorType::Pointer otsuFilter = CalculatorType::New();
+    //otsuFilter->SetInput(reader_original->GetOutput());
+    otsuFilter->SetInputHistogram(input->GetOutput());
+    otsuFilter->SetNumberOfThresholds(1);
+    otsuFilter->Update(); // To compute threshold
+
+                          //OtsuFilterType::ThresholdVectorType thresholds = otsuFilter->GetThresholds();
+    const CalculatorType::OutputType & thresholds = otsuFilter->GetOutput();
+    return thresholds;
+}
+
+OtsuFilterType::ThresholdVectorType otusImg(ReaderType::Pointer input) {
+    
+    OtsuFilterType::Pointer otsuFilter = OtsuFilterType::New();
+    otsuFilter->SetInput(input->GetOutput());
+    otsuFilter->SetNumberOfThresholds(1);
+    otsuFilter->Update(); // To compute threshold
+
+    OtsuFilterType::ThresholdVectorType thresholds = otsuFilter->GetThresholds();
+    return thresholds;
+}
+
+/*
+-20-
+-21-
+-23--
+-28
+-31*
+-47--
+-49--
+-52--
+-54--
+-57-
+-58--
+
+-55miss
+
+-: norm megoldotta
+--:norm javított rajta
+*: nagyon rossz eredmény
+
+*/
 
 //std::string files[] = { "test\\0verse112.nii.gz", "test\\1AnyScan.nii.gz", "test\\2LA_LD_02.nii.gz", "test\\3LA_1.nii.gz", "test\\4LUNG_PET.nii.gz", "test\\5LungRT.nii.gz", "test\\6LA_Diagn_1.nii.gz", "test\\7LA_Diagn_3.nii.gz", "test\\8LA_LD_01.nii.gz", "test\\9LungPhilips.nii.gz" };
 //std::string files[] = { "test\\2LA_LD_02.nii.gz" };
 //std::string files[] = { "test\\6LA_Diagn_1.nii.gz" };
 //std::string files[] = { "test\\9LungPhilips.nii.gz" };
 //std::string files[] = { "bigtest\\lung_08.nii.gz" };
+
+ // std::string files[] = { "bigtest\\lung_20.nii.gz","bigtest\\lung_21.nii.gz","bigtest\\lung_23.nii.gz",
+ // "bigtest\\lung_28.nii.gz","bigtest\\lung_31.nii.gz","bigtest\\lung_47.nii.gz",
+ // "bigtest\\lung_49.nii.gz", "bigtest\\lung_52.nii.gz", "bigtest\\lung_54.nii.gz",
+ // "bigtest\\lung_57.nii.gz", "bigtest\\lung_58.nii.gz"};
+
+//std::string files[] = { "bigtest\\lung_20.nii.gz", "bigtest\\lung_21.nii.gz", "bigtest\\lung_57.nii.gz" };
+//std::string files[] = { "bigtest\\lung_02.nii.gz"};
+
+//std::string files[] = { "bigtest\\lung_20.nii.gz", "bigtest\\lung_14.nii.gz"};
 
 int main(int argc, char ** argv)
 {
@@ -1470,9 +1550,10 @@ int main(int argc, char ** argv)
     }
 
 
-    /* if (argv[1] != nullptr) {
-    files = { argv[1] };
-    }*/
+    // if (argv[1] != nullptr) {
+    //     files.clear();
+    //     files.push_back(argv[1]);
+    // }
 
     int number_of_test_file = 1;
     for (std::string file : files) {
@@ -1553,10 +1634,10 @@ int main(int argc, char ** argv)
             return EXIT_FAILURE;
         }
 
-        normalize<ReaderType::Pointer>(reader_original);
-        normalize<ReaderType::Pointer>(reader_ribs);
-        normalize<ReaderType::Pointer>(reader_original_1);
-        normalize<ReaderType::Pointer>(reader_original_2);
+        ScalarImageToHistogramGeneratorType::Pointer a = normalize<ReaderType::Pointer>(reader_original);
+        ScalarImageToHistogramGeneratorType::Pointer b = normalize<ReaderType::Pointer>(reader_ribs);
+        ScalarImageToHistogramGeneratorType::Pointer c = normalize<ReaderType::Pointer>(reader_original_1);
+        ScalarImageToHistogramGeneratorType::Pointer d = normalize<ReaderType::Pointer>(reader_original_2);
 
         std::string name_of_the_file1 = std::to_string(number_of_test_file) + "_normalized.nii.gz";
 
@@ -1581,12 +1662,7 @@ int main(int argc, char ** argv)
 
         std::cout << "Thresholding" << std::endl;
 
-        OtsuFilterType::Pointer otsuFilter = OtsuFilterType::New();
-        otsuFilter->SetInput(reader_original->GetOutput());
-        otsuFilter->SetNumberOfThresholds(4);
-        otsuFilter->Update(); // To compute threshold
-
-        OtsuFilterType::ThresholdVectorType thresholds = otsuFilter->GetThresholds();
+        const CalculatorType::OutputType & thresholds = otusHist(a);
         for (unsigned int i = 0; i < thresholds.size(); i++)
         {
             std::cout << thresholds[i] << std::endl;
@@ -1595,12 +1671,13 @@ int main(int argc, char ** argv)
         using FilterType = itk::BinaryThresholdImageFilter< ImageType, ImageType >;
         FilterType::Pointer threshFilter = FilterType::New();
         threshFilter->SetInput(reader_original->GetOutput());
-        if (thresholds[3] > 1000) {
-            threshFilter->SetLowerThreshold(thresholds[2]);
-        }
-        else {
-            threshFilter->SetLowerThreshold(thresholds[3]);
-        }
+        // if (thresholds[3] > 1000) {
+        //     threshFilter->SetLowerThreshold(thresholds[2]);
+        // }
+        // else {
+        //     threshFilter->SetLowerThreshold(thresholds[3]);
+        // }
+        threshFilter->SetLowerThreshold(thresholds[0]);
         threshFilter->SetUpperThreshold(10000);
         threshFilter->SetOutsideValue(0);
         threshFilter->SetInsideValue(1);
