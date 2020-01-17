@@ -71,6 +71,15 @@
 
 #include "vector"
 
+#include "itkAddImageFilter.h"
+
+#include "itkImageDuplicator.h"
+
+#include "itkBinaryMorphologicalClosingImageFilter.h"
+#include "itkBinaryBallStructuringElement.h"
+
+#include "itkMedianImageFilter.h"
+
 using PixelType = short;
 
 using ImageType = itk::Image< PixelType, 3 >;
@@ -104,9 +113,12 @@ using CalculatorType = itk::OtsuMultipleThresholdsCalculator<HistogramType>;
 CalculatorType::OutputType otusHist(ScalarImageToHistogramGeneratorType::Pointer input);
 
 OtsuFilterType::ThresholdVectorType otusImg(ReaderType::Pointer input);
-template<class MyType>
-ScalarImageToHistogramGeneratorType::Pointer normalize(MyType input);
 
+ScalarImageToHistogramGeneratorType::Pointer normalize(ImageType::Pointer input);
+
+using AddImageFilterType = itk::AddImageFilter<ImageType, ImageType>;
+
+using DuplicatorType = itk::ImageDuplicator<ImageType>;
 
 bool circle_itersect(double x1, double y1, double r1, double x2, double y2, double r2) {
     double distSq = (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
@@ -921,12 +933,81 @@ void find_ribs_orginal(ReaderType::Pointer reader_ribs, int number_of_test_file,
 }
 
 
+ImageType::Pointer close_on_2d_slices(ImageType::Pointer input) {
+    std::cout << "Closing" << std::endl;
+    using StructuringElementType = itk::BinaryBallStructuringElement<ImageType::PixelType, ImageType::ImageDimension>;
+    StructuringElementType structuringElement;
+    structuringElement.SetRadius(1);
+    structuringElement.CreateStructuringElement();
+    
+    using BinaryMorphologicalClosingImageFilterType =
+        itk::BinaryMorphologicalClosingImageFilter<ImageType, ImageType, StructuringElementType>;
+    BinaryMorphologicalClosingImageFilterType::Pointer closingFilter = BinaryMorphologicalClosingImageFilterType::New();
+    closingFilter->SetForegroundValue(1);
+    closingFilter->SetKernel(structuringElement);
+    
+    using PasteFilterType = itk::PasteImageFilter<ImageType, ImageType>;
+    PasteFilterType::Pointer pasteFilter = PasteFilterType::New();
+    
+    const ImageType * inputImage = input;
+    
+    ImageType::RegionType inputRegion = inputImage->GetBufferedRegion();
+    ImageType::SizeType size = inputRegion.GetSize();
+    int height_of_the_image;
+    height_of_the_image = size[2];
+    using ExtractFilterType = itk::ExtractImageFilter< ImageType, ImageType >;
+
+    pasteFilter->SetDestinationImage(inputImage);
+    for (int i = 1; i < height_of_the_image; i++) {
+        
+        ExtractFilterType::Pointer extractFilter = ExtractFilterType::New();
+        extractFilter->SetDirectionCollapseToSubmatrix();
+    
+        size[2] = 1; // we extract along z direction
+    
+        ImageType::IndexType start = inputRegion.GetIndex();
+    
+        start[2] = i;
+        ImageType::RegionType desiredRegion;
+        desiredRegion.SetSize(size);
+        desiredRegion.SetIndex(start);
+        extractFilter->SetExtractionRegion(desiredRegion);;
+        extractFilter->SetInput(inputImage);
+    
+        closingFilter->SetInput(extractFilter->GetOutput());
+        pasteFilter->SetSourceImage(closingFilter->GetOutput());
+        
+        ImageType::SizeType indexRadius;
+        indexRadius[0] = 1; // radius along x
+        indexRadius[1] = 1; // radius along y
+        indexRadius[2] = 0; // radius along z
+        closingFilter->SetRadius(indexRadius);
+        closingFilter->UpdateLargestPossibleRegion();
+        closingFilter->Update();
+        const ImageType * closingImage = closingFilter->GetOutput();
+        pasteFilter->SetSourceRegion(closingImage->GetBufferedRegion());
+        pasteFilter->SetDestinationIndex(start);
+        
+        pasteFilter->Update();
+        pasteFilter->SetDestinationImage(pasteFilter->GetOutput());
+    }
+    std::cout << "Closing end" << std::endl;
+    return pasteFilter->GetOutput();
+}
+
+
 bool put_seed(ConnectedFilterType::Pointer nC) {
     return false;
 }
 
-void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::vector<CirclesListType> circles_list, int arg_num_of_rib) {
+std::vector<ImageType::IndexType> seed_vec_global_l;
+std::vector<ImageType::IndexType> seed_vec_global_r;
 
+ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_file, std::vector<CirclesListType> circles_list, int arg_num_of_rib) {
+    seed_vec_global_l.clear();
+    seed_vec_global_r.clear();
+
+    ImageType::Pointer image_to_process;
 
     ConnectedFilterType::Pointer neighborhoodConnected = ConnectedFilterType::New();
 
@@ -948,7 +1029,7 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
     }
 
     threshFilter = FilterType::New();
-    threshFilter->SetInput(reader_ribs->GetOutput());
+    threshFilter->SetInput(reader_ribs);
     //if (thresholds[3] > 1000) {
     //    threshFilter->SetLowerThreshold(thresholds[2]);
     //}
@@ -962,13 +1043,29 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
     threshFilter->Update();
 
 
+    //using StructuringElementType = itk::BinaryBallStructuringElement<ImageType::PixelType, ImageType::ImageDimension>;
+    //StructuringElementType structuringElement;
+    //structuringElement.SetRadius(1);
+    //structuringElement.CreateStructuringElement();
+    //
+    //using BinaryMorphologicalClosingImageFilterType =
+    //    itk::BinaryMorphologicalClosingImageFilter<ImageType, ImageType, StructuringElementType>;
+    //BinaryMorphologicalClosingImageFilterType::Pointer closingFilter = BinaryMorphologicalClosingImageFilterType::New();
+    //closingFilter->SetInput(threshFilter->GetOutput());
+    //closingFilter->SetForegroundValue(1);
+    //closingFilter->SetKernel(structuringElement);
+    //closingFilter->Update();
+    //image_to_process = closingFilter->GetOutput();
+
+    image_to_process = close_on_2d_slices(threshFilter->GetOutput());
+
     std::string name_of_the_file = std::to_string(number_of_test_file) + "_threshold_ribs.nii.gz";
 
 
     using WriterTypeT = itk::ImageFileWriter< ImageType >;
     WriterTypeT::Pointer writerT = WriterTypeT::New();
     writerT->SetFileName(name_of_the_file);
-    writerT->SetInput(threshFilter->GetOutput());
+    writerT->SetInput(image_to_process);
     try
     {
         writerT->Update();
@@ -980,7 +1077,7 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
     }
 
     ImageType::IndexType index3d;
-    ImageType::SizeType size_ribs = threshFilter->GetOutput()->GetLargestPossibleRegion().GetSize();
+    ImageType::SizeType size_ribs = image_to_process->GetLargestPossibleRegion().GetSize();
 
 
     //int offset_l_x = -70;
@@ -1045,8 +1142,8 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
             y_cc = (*itCircles)->GetObjectToParentTransform()->GetOffset()[1];
         }
 
-        offset_l_x = -(*itCircles)->GetRadius()[0] - 10;
-        offset_r_x = (*itCircles)->GetRadius()[0] + 10;
+        offset_l_x = -(*itCircles)->GetRadius()[0] - 7;
+        offset_r_x = (*itCircles)->GetRadius()[0] + 7;
 
         // std::cout << "DEBUG" << __LINE__ << std::endl;
 
@@ -1066,10 +1163,10 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
                 // LEFT
                 index3d[0] = x_c + offset_l_x - x;
                 if (x == width_of_the_mark - 1 && y_c + end > y && y > y_c) {
-                    pixelIntensity_l += threshFilter->GetOutput()->GetPixel(index3d);
+                    pixelIntensity_l += image_to_process->GetPixel(index3d);
 
                 }
-                actual_pixel_intesity = threshFilter->GetOutput()->GetPixel(index3d);
+                actual_pixel_intesity = image_to_process->GetPixel(index3d);
 
                 if (pixelIntensity_l != 0 /*&& /*!there_was_a_seed_before && num_of_ribs*/) {
 
@@ -1080,7 +1177,7 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
                     seed_l[2] = index3d[2];
 
 
-                    if (threshFilter->GetOutput()->GetPixel(seed_l) == 1 && seed_l[2] - old_seed_z > min_space_bw_ribs && x == 19) {
+                    if (image_to_process->GetPixel(seed_l) == 1 && seed_l[2] - old_seed_z > min_space_bw_ribs && x == 19) {
                         seed_l[0]++;
                         //neighborhoodConnected->AddSeed(seed_l);
                         seed_vec_l.push_back(seed_l);
@@ -1112,14 +1209,14 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
                 }
                 if (actual_pixel_intesity != 0) {
 
-                    threshFilter->GetOutput()->SetPixel(index3d, -1);
+                    image_to_process->SetPixel(index3d, -1);
                 }
                 else {
                     if (y_c + end > y && y > y_c) {
-                        threshFilter->GetOutput()->SetPixel(index3d, -2);
+                        image_to_process->SetPixel(index3d, -2);
                     }
                     else {
-                        threshFilter->GetOutput()->SetPixel(index3d, -3);
+                        image_to_process->SetPixel(index3d, -3);
                     }
 
                 }
@@ -1130,10 +1227,10 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
                 // RIGHT
                 index3d[0] = x_c + offset_r_x + x;
                 if (x == width_of_the_mark - 1 && y_c + end > y && y > y_c) {
-                    pixelIntensity_r += threshFilter->GetOutput()->GetPixel(index3d);
+                    pixelIntensity_r += image_to_process->GetPixel(index3d);
                 }
                 
-                actual_pixel_intesity = threshFilter->GetOutput()->GetPixel(index3d);
+                actual_pixel_intesity = image_to_process->GetPixel(index3d);
                 if (pixelIntensity_r != 0 /*&& !there_was_a_seed_before_r && num_of_ribs_r*/) {
                 
                 
@@ -1143,7 +1240,7 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
                     seed_r[2] = index3d[2];
                 
                 
-                    if (threshFilter->GetOutput()->GetPixel(seed_r) == 1 && seed_r[2] - old_seed_r_z > min_space_bw_ribs && x == 19) {
+                    if (image_to_process->GetPixel(seed_r) == 1 && seed_r[2] - old_seed_r_z > min_space_bw_ribs && x == 19) {
                         seed_r[0]--;
                         // neighborhoodConnected->AddSeed(seed_r);
                         seed_vec_r.push_back(seed_r);
@@ -1167,14 +1264,14 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
                 }
                 if (actual_pixel_intesity != 0) {
                 
-                    threshFilter->GetOutput()->SetPixel(index3d, -1);
+                    image_to_process->SetPixel(index3d, -1);
                 }
                 else {
                     if (y_c + end > y && y > y_c) {
-                        threshFilter->GetOutput()->SetPixel(index3d, -2);
+                        image_to_process->SetPixel(index3d, -2);
                     }
                     else {
-                        threshFilter->GetOutput()->SetPixel(index3d, -3);
+                        image_to_process->SetPixel(index3d, -3);
                     }
                 }
                 actual_pixel_intesity = 0;
@@ -1184,10 +1281,12 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
             }
             if (!seed_vec_l.empty()) {
                 neighborhoodConnected->AddSeed(seed_vec_l[0]);
+                seed_vec_global_l.push_back(seed_vec_l[0]);
                 seed_vec_l.clear();
             }
             if (!seed_vec_r.empty()) {
                 neighborhoodConnected->AddSeed(seed_vec_r[0]);
+                seed_vec_global_r.push_back(seed_vec_r[0]);
                 seed_vec_r.clear();
             }
         }
@@ -1378,7 +1477,7 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
     name_of_the_file = std::to_string(number_of_test_file) + "_threshold_ribs_mark.nii.gz";
 
     writerT->SetFileName(name_of_the_file);
-    writerT->SetInput(threshFilter->GetOutput());
+    writerT->SetInput(image_to_process);
     try
     {
         writerT->Update();
@@ -1391,7 +1490,7 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
 
     //smoothing->SetInput(reader->GetOutput());
 
-    neighborhoodConnected->SetInput(threshFilter->GetOutput());
+    neighborhoodConnected->SetInput(image_to_process);
 
     //smoothing->SetNumberOfIterations(5);
     //smoothing->SetTimeStep(0.125);
@@ -1413,7 +1512,7 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
     //seed[2] = 148;
     //
     //neighborhoodConnected->SetSeed(seed);
-    neighborhoodConnected->SetReplaceValue(8);
+    neighborhoodConnected->SetReplaceValue(20);
 
     neighborhoodConnected->Update();
 
@@ -1433,10 +1532,150 @@ void find_ribs(ReaderType::Pointer reader_ribs, int number_of_test_file, std::ve
         std::cerr << err << std::endl;
     }
 
+    return caster->GetOutput();
+
 }
 
-template<class MyType>
-ScalarImageToHistogramGeneratorType::Pointer normalize(MyType input) {
+void label_ribs(ImageType::Pointer ribs_only, int number_of_test_file, std::vector<CirclesListType> circles_list, int arg_num_of_rib) {
+    using WriterTypeT = itk::ImageFileWriter< ImageType >;
+    WriterTypeT::Pointer writerT = WriterTypeT::New();
+    ConnectedFilterType::Pointer neighborhoodConnected = ConnectedFilterType::New();
+
+    AddImageFilterType::Pointer addFilter = AddImageFilterType::New();
+    // addFilter->SetInput1(image1);
+    // addFilter->SetInput2(image2);
+    // addFilter->Update();
+
+    DuplicatorType::Pointer duplicator = DuplicatorType::New();
+    duplicator->SetInputImage(ribs_only);
+    duplicator->Update();
+
+    ImageType::Pointer ribs_labeled = duplicator->GetOutput();
+    ribs_labeled->FillBuffer(0);
+
+    // for (ImageType::IndexType index3d_temp_l : seed_vec_global_l) {
+    //     neighborhoodConnected->AddSeed(index3d_temp_l);
+    //     neighborhoodConnected->SetReplaceValue(i++);
+    //     neighborhoodConnected->Update();
+    // }
+
+    const PixelType lowerThreshold = 20;
+    const PixelType upperThreshold = 20;
+
+    neighborhoodConnected->SetLower(lowerThreshold);
+    neighborhoodConnected->SetUpper(upperThreshold);
+
+    ImageType::SizeType radius;
+    radius[0] = 0;   // two pixels along x
+    radius[1] = 0;   // two pixels along y
+    radius[2] = 0;   // two pixels along z
+    neighborhoodConnected->SetRadius(radius);
+
+    // TEST
+    std::vector<ImageType::IndexType> test_seeds;
+
+
+    ImageType::IndexType seed1_test;
+    seed1_test[0] = 217;
+    seed1_test[1] = 313;
+    seed1_test[2] = 8;
+
+    ImageType::IndexType seed2_test;
+    seed2_test[0] = 215;
+    seed2_test[1] = 322;
+    seed2_test[2] = 22;
+
+    test_seeds.push_back(seed1_test);
+    test_seeds.push_back(seed2_test);
+
+    neighborhoodConnected->SetInput(ribs_only);
+
+    addFilter->SetInput1(ribs_labeled);
+    addFilter->SetInput2(ribs_labeled);
+    addFilter->Update();
+
+
+
+    for (int i = 0; i < seed_vec_global_l.size(); i++) {
+        int j = 1;
+        while (i + j < seed_vec_global_l.size() - 1 && (seed_vec_global_l[i + j].GetIndex()[2] - seed_vec_global_l[i + j - 1].GetIndex()[2]) == 1) {
+            j++;
+        }
+        seed_vec_global_l.erase(seed_vec_global_l.begin() + i + 1, seed_vec_global_l.begin() + i + j);
+    }
+
+    for (int i = 0; i < seed_vec_global_r.size(); i++) {
+        int j = 1;
+        while (i + j < seed_vec_global_r.size() && (seed_vec_global_r[i + j].GetIndex()[2] - seed_vec_global_r[i + j - 1].GetIndex()[2]) == 1) {
+            j++;
+        }
+        seed_vec_global_r.erase(seed_vec_global_r.begin() + i + 1, seed_vec_global_r.begin() + i + j);
+    }
+
+
+    int i = 1;
+    for (ImageType::IndexType index3d_temp_l : seed_vec_global_l) {
+    //for (ImageType::IndexType index3d_temp_l : test_seeds) {
+        std::cout << index3d_temp_l << std::endl;
+        neighborhoodConnected->ClearSeeds();
+        std::cout << "i: " << i << std::endl;
+        neighborhoodConnected->AddSeed(index3d_temp_l);
+        neighborhoodConnected->SetReplaceValue(i);
+        neighborhoodConnected->Update();
+
+        addFilter->SetInput1(addFilter->GetOutput());
+        addFilter->SetInput2(neighborhoodConnected->GetOutput());
+        addFilter->Update();
+        i += 2;
+    }
+
+    i = 2;
+    for (ImageType::IndexType index3d_temp_r : seed_vec_global_r) {
+        //for (ImageType::IndexType index3d_temp_l : test_seeds) {
+        std::cout << index3d_temp_r << std::endl;
+        neighborhoodConnected->ClearSeeds();
+        std::cout << "i: " << i << std::endl;
+        neighborhoodConnected->AddSeed(index3d_temp_r);
+        neighborhoodConnected->SetReplaceValue(i);
+        neighborhoodConnected->Update();
+
+        addFilter->SetInput1(addFilter->GetOutput());
+        addFilter->SetInput2(neighborhoodConnected->GetOutput());
+        addFilter->Update();
+        i += 2;
+    }
+
+    //seed[0] = 1;
+    //seed[1] = 425;
+    //seed[2] = 148;
+    //
+    //neighborhoodConnected->SetSeed(seed);
+    //neighborhoodConnected->SetReplaceValue(8);
+
+    //neighborhoodConnected->Update();
+
+    typedef itk::CastImageFilter< ImageType, ImageType >
+        CastingFilterType;
+    CastingFilterType::Pointer caster = CastingFilterType::New();
+
+    caster->SetInput(neighborhoodConnected->GetOutput());
+
+    std::string name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_labed.nii.gz";
+
+    writerT->SetFileName(name_of_the_file);
+    writerT->SetInput(addFilter->GetOutput());
+    try
+    {
+        writerT->Update();
+    }
+    catch (itk::ExceptionObject & err)
+    {
+        std::cerr << "ExceptionObject caught !" << std::endl;
+        std::cerr << err << std::endl;
+    }
+}
+
+ScalarImageToHistogramGeneratorType::Pointer normalize(ImageType::Pointer input) {
 
     ScalarImageToHistogramGeneratorType::Pointer scalarImageToHistogramGenerator = ScalarImageToHistogramGeneratorType::New();
 
@@ -1444,9 +1683,9 @@ ScalarImageToHistogramGeneratorType::Pointer normalize(MyType input) {
 
     scalarImageToHistogramGenerator->SetHistogramMin(0);
     scalarImageToHistogramGenerator->SetHistogramMax(1000);
-    scalarImageToHistogramGenerator->SetAutoHistogramMinimumMaximum(false);
-    scalarImageToHistogramGenerator->SetInput(input->GetOutput());
     scalarImageToHistogramGenerator->SetNumberOfBins(50);
+    scalarImageToHistogramGenerator->SetAutoHistogramMinimumMaximum(false);
+    scalarImageToHistogramGenerator->SetInput(input);
     scalarImageToHistogramGenerator->Compute();
 
     return scalarImageToHistogramGenerator;
@@ -1498,20 +1737,37 @@ OtsuFilterType::ThresholdVectorType otusImg(ReaderType::Pointer input) {
     return thresholds;
 }
 
+void write_hist(ScalarImageToHistogramGeneratorType::Pointer a, int number_of_test_file) {
+    std::cout << "Hist writing" << std::endl;
+    std::cout << a->GetOutput()->GetFrequency(0) << std::endl;
+    //for (int i = a->GetOutput()_ge)
+    std::ofstream myfile;
+    myfile.open(std::to_string(number_of_test_file) + "_norm_hist.txt");
+    myfile << "[ ";
+    for (int i = 0; i < 50; i++) {
+        myfile << a->GetOutput()->GetFrequency(i) << " ";
+        //std::cout << a->GetOutput()->GetFrequency(0) ;
+
+    }
+    myfile << "]";
+    myfile.close();
+}
+
 /*
 -20-
 -21-
 -23--
--28
+-28*
 -31*
 -47--
 -49--
 -52--
--54--
+-54*
 -57-
 -58--
 
 -55miss
+-24érdekes
 
 -: norm megoldotta
 --:norm javított rajta
@@ -1525,7 +1781,7 @@ OtsuFilterType::ThresholdVectorType otusImg(ReaderType::Pointer input) {
 //std::string files[] = { "test\\9LungPhilips.nii.gz" };
 //std::string files[] = { "bigtest\\lung_08.nii.gz" };
 
- // std::string files[] = { "bigtest\\lung_20.nii.gz","bigtest\\lung_21.nii.gz","bigtest\\lung_23.nii.gz",
+//std::string files[] = { "bigtest\\lung_19.nii.gz" };
  // "bigtest\\lung_28.nii.gz","bigtest\\lung_31.nii.gz","bigtest\\lung_47.nii.gz",
  // "bigtest\\lung_49.nii.gz", "bigtest\\lung_52.nii.gz", "bigtest\\lung_54.nii.gz",
  // "bigtest\\lung_57.nii.gz", "bigtest\\lung_58.nii.gz"};
@@ -1534,6 +1790,10 @@ OtsuFilterType::ThresholdVectorType otusImg(ReaderType::Pointer input) {
 //std::string files[] = { "bigtest\\lung_02.nii.gz"};
 
 //std::string files[] = { "bigtest\\lung_20.nii.gz", "bigtest\\lung_14.nii.gz"};
+
+// TEST labeling on this
+
+//std::string files[] = { "bigtest\\lung_08.nii.gz" };
 
 int main(int argc, char ** argv)
 {
@@ -1634,10 +1894,13 @@ int main(int argc, char ** argv)
             return EXIT_FAILURE;
         }
 
-        ScalarImageToHistogramGeneratorType::Pointer a = normalize<ReaderType::Pointer>(reader_original);
-        ScalarImageToHistogramGeneratorType::Pointer b = normalize<ReaderType::Pointer>(reader_ribs);
-        ScalarImageToHistogramGeneratorType::Pointer c = normalize<ReaderType::Pointer>(reader_original_1);
-        ScalarImageToHistogramGeneratorType::Pointer d = normalize<ReaderType::Pointer>(reader_original_2);
+        ScalarImageToHistogramGeneratorType::Pointer a = normalize(reader_original->GetOutput());
+        ScalarImageToHistogramGeneratorType::Pointer b = normalize(reader_ribs->GetOutput());
+        ScalarImageToHistogramGeneratorType::Pointer c = normalize(reader_original_1->GetOutput());
+        ScalarImageToHistogramGeneratorType::Pointer d = normalize(reader_original_2->GetOutput());
+
+        write_hist(a, number_of_test_file);
+
 
         std::string name_of_the_file1 = std::to_string(number_of_test_file) + "_normalized.nii.gz";
 
@@ -1790,8 +2053,10 @@ int main(int argc, char ** argv)
             return EXIT_FAILURE;
         }
 
-        find_ribs(reader_ribs, number_of_test_file, circles_list, std::atoi(argv[1]));
+        //ImageType::Pointer image_ribs_only = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, std::atoi(argv[1]));
+        ImageType::Pointer image_ribs_only = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, std::atoi(argv[1]));
 
+        label_ribs(image_ribs_only, number_of_test_file, circles_list, std::atoi(argv[1]));
 
 
 
