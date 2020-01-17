@@ -454,7 +454,7 @@ MyType do_hough_on_image(MyType input, MyType2 &original, bool keep_only_inside,
 
     houghFilter->SetInput(input->GetOutput());
     //houghFilter->SetNumberOfCircles(atoi(argv[3]));
-    houghFilter->SetNumberOfCircles(8);
+    houghFilter->SetNumberOfCircles(10);
 
     houghFilter->SetMinimumRadius(10);
     houghFilter->SetMaximumRadius(30);
@@ -660,7 +660,7 @@ void corrigate_circles_local(std::vector<CirclesListType> &circles_list1) {
     Object2ToObject1Offset[1] = 100;
 
 
-    int filter_size = 21;
+    int filter_size = 15;
 
     for (int i = 0; i < circles_list.size(); i++) {
 
@@ -671,21 +671,23 @@ void corrigate_circles_local(std::vector<CirclesListType> &circles_list1) {
 
         int sum = 0;
         int j = 0;
-        if (i < std::ceil(filter_size / 2)) {
-            j = std::ceil(filter_size / 2);
-        }
-        else if (i >= circles_list.size() - std::ceil(filter_size / 2)) {
-            j = circles_list.size() - std::ceil(filter_size / 2) - 1;
-        }
-        else {
-            j = i;
-        }
+        //if (i < std::ceil(filter_size / 2)) {
+        //    j = std::ceil(filter_size / 2);
+        //}
+        //else if (i >= circles_list.size() - std::ceil(filter_size / 2)) {
+        //    j = circles_list.size() - std::ceil(filter_size / 2) - 1;
+        //}
+        //else {
+        //    j = i;
+        //}
 
 
-        j = j - std::ceil(filter_size / 2);
+        j = i - std::ceil(filter_size / 2);
         int end_of_filter_in_lopp = j + filter_size;
         for (; j < end_of_filter_in_lopp; j++) {
-
+            if (j < 0 || j >= circles_list.size()) {
+                continue;
+            }
             CirclesListType::const_iterator itCircles = circles_list[j].begin();
 
             av_x += (*itCircles)->GetObjectToParentTransform()->GetOffset()[0];
@@ -1947,7 +1949,9 @@ int main(int argc, char ** argv)
         threshFilter->Update();
 
 
-        const ImageType * inputImage = threshFilter->GetOutput();
+        // CLOSING
+        const ImageType::Pointer inputImage = close_on_2d_slices(threshFilter->GetOutput());
+        //const ImageType * inputImage = threshFilter->GetOutput();
 
         ImageType::RegionType inputRegion = inputImage->GetBufferedRegion();
         ImageType::SizeType size = inputRegion.GetSize();
