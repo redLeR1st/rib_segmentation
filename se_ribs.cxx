@@ -76,9 +76,23 @@
 #include "itkImageDuplicator.h"
 
 #include "itkBinaryMorphologicalClosingImageFilter.h"
+#include "itkBinaryMorphologicalOpeningImageFilter.h"
 #include "itkBinaryBallStructuringElement.h"
 
 #include "itkMedianImageFilter.h"
+
+#include "itkConnectedComponentImageFilter.h"
+
+#include "itkLabelShapeKeepNObjectsImageFilter.h"
+
+#include "itkLabelImageToShapeLabelMapFilter.h"
+#include "itkLabelImageToStatisticsLabelMapFilter.h"
+
+#include "itkLabelMapToLabelImageFilter.h"
+
+#include "itkObjectByObjectLabelMapFilter.h"
+
+#include "itkLabelUniqueLabelMapFilter.h"
 
 using PixelType = short;
 
@@ -110,15 +124,35 @@ using HistogramType = ScalarImageToHistogramGeneratorType::HistogramType;
 
 using CalculatorType = itk::OtsuMultipleThresholdsCalculator<HistogramType>;
 
+using ConnectedComponentImageFilterType = itk::ConnectedComponentImageFilter<ImageType, ImageType>;
+
 CalculatorType::OutputType otusHist(ScalarImageToHistogramGeneratorType::Pointer input);
 
 OtsuFilterType::ThresholdVectorType otusImg(ReaderType::Pointer input);
+
+ImageType::IndexType get_optimal_seed(ImageType::Pointer ribs_only, std::vector<ImageType::IndexType> seed_vec, int begin, int end);
 
 ScalarImageToHistogramGeneratorType::Pointer normalize(ImageType::Pointer input);
 
 using AddImageFilterType = itk::AddImageFilter<ImageType, ImageType>;
 
 using DuplicatorType = itk::ImageDuplicator<ImageType>;
+
+using LabelShapeKeepNObjectsImageFilterType = itk::LabelShapeKeepNObjectsImageFilter<ImageType>;
+
+
+using ShapeLabelObjectType = itk::ShapeLabelObject<unsigned short, 3>;
+using LabelMapType = itk::LabelMap<ShapeLabelObjectType>;
+
+using StatisticsShapeLabelObjectType = itk::StatisticsLabelObject<unsigned short, 3>;
+using StatisticsLabelMapType = itk::LabelMap<StatisticsShapeLabelObjectType>;
+
+using I2LType = itk::LabelImageToShapeLabelMapFilter<ImageType, LabelMapType>;
+using I2LType_stat = itk::LabelImageToStatisticsLabelMapFilter<ImageType, StatisticsLabelMapType>;
+
+typedef itk::LabelImageToLabelMapFilter< ImageType, LabelMapType > LabelImageToLabelMapFilterType;
+
+using LabelMapToLabelImageFilterType = itk::LabelMapToLabelImageFilter<LabelMapType, ImageType>;
 
 bool circle_itersect(double x1, double y1, double r1, double x2, double y2, double r2) {
     double distSq = (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
@@ -935,17 +969,118 @@ void find_ribs_orginal(ReaderType::Pointer reader_ribs, int number_of_test_file,
 }
 
 
-ImageType::Pointer close_on_2d_slices(ImageType::Pointer input) {
+//ImageType::Pointer open_on_3d_slices(ImageType::Pointer input, int radius, int foreground) {
+//    std::cout << "Opening" << std::endl;
+//    using StructuringElementType = itk::BinaryBallStructuringElement<ImageType::PixelType, ImageType::ImageDimension>;
+//    StructuringElementType structuringElement;
+//    structuringElement.SetRadius(radius);
+//    structuringElement.CreateStructuringElement();
+//
+//    using BinaryMorphologicalOpeningImageFilterType =
+//        itk::BinaryMorphologicalOpeningImageFilter<ImageType, ImageType, StructuringElementType>;
+//    BinaryMorphologicalOpeningImageFilterType::Pointer closingFilter = BinaryMorphologicalOpeningImageFilterType::New();
+//    closingFilter->SetForegroundValue(foreground);
+//    closingFilter->SetKernel(structuringElement);
+//
+//    closingFilter->SetInput(input);
+//    closingFilter->Update();
+//
+//    return closingFilter->GetOutput();
+//}
+//
+//ImageType::Pointer open_on_2d_slices(ImageType::Pointer input, int radius, int foreground) {
+//    std::cout << "Opening" << std::endl;
+//    using StructuringElementType = itk::BinaryBallStructuringElement<ImageType::PixelType, ImageType::ImageDimension>;
+//    StructuringElementType structuringElement;
+//    structuringElement.SetRadius(radius);
+//    structuringElement.CreateStructuringElement();
+//
+//    using BinaryMorphologicalOpeningImageFilterType =
+//        itk::BinaryMorphologicalOpeningImageFilter<ImageType, ImageType, StructuringElementType>;
+//    BinaryMorphologicalOpeningImageFilterType::Pointer closingFilter = BinaryMorphologicalOpeningImageFilterType::New();
+//    closingFilter->SetForegroundValue(foreground);
+//    closingFilter->SetKernel(structuringElement);
+//
+//    using PasteFilterType = itk::PasteImageFilter<ImageType, ImageType>;
+//    PasteFilterType::Pointer pasteFilter = PasteFilterType::New();
+//
+//    const ImageType * inputImage = input;
+//
+//    ImageType::RegionType inputRegion = inputImage->GetBufferedRegion();
+//    ImageType::SizeType size = inputRegion.GetSize();
+//    int height_of_the_image;
+//    height_of_the_image = size[2];
+//    using ExtractFilterType = itk::ExtractImageFilter< ImageType, ImageType >;
+//
+//    pasteFilter->SetDestinationImage(inputImage);
+//    for (int i = 1; i < height_of_the_image; i++) {
+//
+//        ExtractFilterType::Pointer extractFilter = ExtractFilterType::New();
+//        extractFilter->SetDirectionCollapseToSubmatrix();
+//
+//        size[2] = 1; // we extract along z direction
+//
+//        ImageType::IndexType start = inputRegion.GetIndex();
+//
+//        start[2] = i;
+//        ImageType::RegionType desiredRegion;
+//        desiredRegion.SetSize(size);
+//        desiredRegion.SetIndex(start);
+//        extractFilter->SetExtractionRegion(desiredRegion);;
+//        extractFilter->SetInput(inputImage);
+//
+//        closingFilter->SetInput(extractFilter->GetOutput());
+//        pasteFilter->SetSourceImage(closingFilter->GetOutput());
+//
+//        ImageType::SizeType indexRadius;
+//        indexRadius[0] = 1; // radius along x
+//        indexRadius[1] = 1; // radius along y
+//        indexRadius[2] = 0; // radius along z
+//        closingFilter->SetRadius(indexRadius);
+//        closingFilter->UpdateLargestPossibleRegion();
+//        closingFilter->Update();
+//        const ImageType * closingImage = closingFilter->GetOutput();
+//        pasteFilter->SetSourceRegion(closingImage->GetBufferedRegion());
+//        pasteFilter->SetDestinationIndex(start);
+//
+//        pasteFilter->Update();
+//        pasteFilter->SetDestinationImage(pasteFilter->GetOutput());
+//    }
+//    std::cout << "Opening end" << std::endl;
+//    return pasteFilter->GetOutput();
+//}
+
+
+ImageType::Pointer close_on_3d_slices(ImageType::Pointer input, int radius, int foreground) {
     std::cout << "Closing" << std::endl;
     using StructuringElementType = itk::BinaryBallStructuringElement<ImageType::PixelType, ImageType::ImageDimension>;
     StructuringElementType structuringElement;
-    structuringElement.SetRadius(1);
+    structuringElement.SetRadius(radius);
+    structuringElement.CreateStructuringElement();
+
+    using BinaryMorphologicalClosingImageFilterType =
+        itk::BinaryMorphologicalClosingImageFilter<ImageType, ImageType, StructuringElementType>;
+    BinaryMorphologicalClosingImageFilterType::Pointer closingFilter = BinaryMorphologicalClosingImageFilterType::New();
+    closingFilter->SetForegroundValue(foreground);
+    closingFilter->SetKernel(structuringElement);
+
+    closingFilter->SetInput(input);
+    closingFilter->Update();
+
+    return closingFilter->GetOutput();
+}
+
+ImageType::Pointer close_on_2d_slices(ImageType::Pointer input, int radius, int foreground) {
+    std::cout << "Closing" << std::endl;
+    using StructuringElementType = itk::BinaryBallStructuringElement<ImageType::PixelType, ImageType::ImageDimension>;
+    StructuringElementType structuringElement;
+    structuringElement.SetRadius(radius);
     structuringElement.CreateStructuringElement();
     
     using BinaryMorphologicalClosingImageFilterType =
         itk::BinaryMorphologicalClosingImageFilter<ImageType, ImageType, StructuringElementType>;
     BinaryMorphologicalClosingImageFilterType::Pointer closingFilter = BinaryMorphologicalClosingImageFilterType::New();
-    closingFilter->SetForegroundValue(1);
+    closingFilter->SetForegroundValue(foreground);
     closingFilter->SetKernel(structuringElement);
     
     using PasteFilterType = itk::PasteImageFilter<ImageType, ImageType>;
@@ -1005,7 +1140,7 @@ bool put_seed(ConnectedFilterType::Pointer nC) {
 std::vector<ImageType::IndexType> seed_vec_global_l;
 std::vector<ImageType::IndexType> seed_vec_global_r;
 
-ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_file, std::vector<CirclesListType> circles_list, int arg_num_of_rib) {
+ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_file, std::vector<CirclesListType> circles_list, int arg_num_of_rib, bool is_cleaned_from_non_ribs) {
     seed_vec_global_l.clear();
     seed_vec_global_r.clear();
 
@@ -1017,33 +1152,37 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
         CastingFilterType;
     CastingFilterType::Pointer caster = CastingFilterType::New();
 
-
-    // RIB SEARCH
-    std::cout << "Thresholding for ribs" << std::endl;
-
     using FilterType = itk::BinaryThresholdImageFilter< ImageType, ImageType >;
     FilterType::Pointer threshFilter = FilterType::New();
-    OtsuFilterType::ThresholdVectorType thresholds;
-    thresholds = otusHist(normalize(reader_ribs));
-    for (unsigned int i = 0; i < thresholds.size(); i++)
-    {
-        std::cout << thresholds[i] << std::endl;
-    }
-
     threshFilter = FilterType::New();
     threshFilter->SetInput(reader_ribs);
-    //if (thresholds[3] > 1000) {
-    //    threshFilter->SetLowerThreshold(thresholds[2]);
-    //}
-    //else {
-    //    threshFilter->SetLowerThreshold(thresholds[3]);
     
-    threshFilter->SetLowerThreshold(thresholds[0]);
+    if (!is_cleaned_from_non_ribs) {
+        // RIB SEARCH
+        std::cout << "Thresholding for ribs" << std::endl;
+
+
+        OtsuFilterType::ThresholdVectorType thresholds;
+        thresholds = otusHist(normalize(reader_ribs));
+        for (unsigned int i = 0; i < thresholds.size(); i++)
+        {
+            std::cout << thresholds[i] << std::endl;
+        }
+        //if (thresholds[3] > 1000) {
+        //    threshFilter->SetLowerThreshold(thresholds[2]);
+        //}
+        //else {
+        //    threshFilter->SetLowerThreshold(thresholds[3]);
+    
+        threshFilter->SetLowerThreshold(thresholds[0]);
+    }
+    else {
+        threshFilter->SetLowerThreshold(1);
+    }
     threshFilter->SetUpperThreshold(10000);
     threshFilter->SetOutsideValue(0);
     threshFilter->SetInsideValue(1);
     threshFilter->Update();
-
 
     //using StructuringElementType = itk::BinaryBallStructuringElement<ImageType::PixelType, ImageType::ImageDimension>;
     //StructuringElementType structuringElement;
@@ -1059,9 +1198,15 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
     //closingFilter->Update();
     //image_to_process = closingFilter->GetOutput();
 
-    image_to_process = close_on_2d_slices(threshFilter->GetOutput());
+    DuplicatorType::Pointer duplicator = DuplicatorType::New();
+    duplicator->SetInputImage(threshFilter->GetOutput());
+    duplicator->Update();
 
-    std::string name_of_the_file = std::to_string(number_of_test_file) + "_threshold_ribs.nii.gz";
+    //image_to_process = close_on_2d_slices(threshFilter->GetOutput(), 1, 1);
+    image_to_process = threshFilter->GetOutput();
+
+    std::string name_of_the_file;
+    name_of_the_file = std::to_string(number_of_test_file) + "_threshold_ribs.nii.gz";
 
 
     using WriterTypeT = itk::ImageFileWriter< ImageType >;
@@ -1070,7 +1215,9 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
     writerT->SetInput(image_to_process);
     try
     {
-        writerT->Update();
+        if (!is_cleaned_from_non_ribs) {
+            writerT->Update();
+        }
     }
     catch (itk::ExceptionObject & err)
     {
@@ -1144,8 +1291,12 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
             y_cc = (*itCircles)->GetObjectToParentTransform()->GetOffset()[1];
         }
 
+        // TODO: ORIGINAL
         offset_l_x = -(*itCircles)->GetRadius()[0] - 7;
         offset_r_x = (*itCircles)->GetRadius()[0] + 7;
+
+        //offset_l_x = -(*itCircles)->GetRadius()[0];
+        //offset_r_x = (*itCircles)->GetRadius()[0];
 
         // std::cout << "DEBUG" << __LINE__ << std::endl;
 
@@ -1179,7 +1330,7 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
                     seed_l[2] = index3d[2];
 
 
-                    if (image_to_process->GetPixel(seed_l) == 1 && seed_l[2] - old_seed_z > min_space_bw_ribs && x == 19) {
+                    if (image_to_process->GetPixel(seed_l) == 1 && /*seed_l[2] - old_seed_z > min_space_bw_ribs &&*/ x == 19) {
                         seed_l[0]++;
                         //neighborhoodConnected->AddSeed(seed_l);
                         seed_vec_l.push_back(seed_l);
@@ -1212,13 +1363,16 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
                 if (actual_pixel_intesity != 0) {
 
                     image_to_process->SetPixel(index3d, -1);
+                    duplicator->GetOutput()->SetPixel(index3d, -1);
                 }
                 else {
                     if (y_c + end > y && y > y_c) {
                         image_to_process->SetPixel(index3d, -2);
+                        duplicator->GetOutput()->SetPixel(index3d, -2);
                     }
                     else {
                         image_to_process->SetPixel(index3d, -3);
+                        duplicator->GetOutput()->SetPixel(index3d, -3);
                     }
 
                 }
@@ -1242,7 +1396,7 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
                     seed_r[2] = index3d[2];
                 
                 
-                    if (image_to_process->GetPixel(seed_r) == 1 && seed_r[2] - old_seed_r_z > min_space_bw_ribs && x == 19) {
+                    if (image_to_process->GetPixel(seed_r) == 1 && /*seed_r[2] - old_seed_r_z > min_space_bw_ribs &&*/ x == 19) {
                         seed_r[0]--;
                         // neighborhoodConnected->AddSeed(seed_r);
                         seed_vec_r.push_back(seed_r);
@@ -1267,13 +1421,16 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
                 if (actual_pixel_intesity != 0) {
                 
                     image_to_process->SetPixel(index3d, -1);
+                    duplicator->GetOutput()->SetPixel(index3d, -1);
                 }
                 else {
                     if (y_c + end > y && y > y_c) {
                         image_to_process->SetPixel(index3d, -2);
+                        duplicator->GetOutput()->SetPixel(index3d, -2);
                     }
                     else {
                         image_to_process->SetPixel(index3d, -3);
+                        duplicator->GetOutput()->SetPixel(index3d, -3);
                     }
                 }
                 actual_pixel_intesity = 0;
@@ -1281,15 +1438,31 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
 
 
             }
-            if (!seed_vec_l.empty()) {
-                neighborhoodConnected->AddSeed(seed_vec_l[0]);
-                seed_vec_global_l.push_back(seed_vec_l[0]);
+            if (!is_cleaned_from_non_ribs) {
+                // KEEP ALL
+                for (int seed_ind = 0; seed_ind < seed_vec_l.size(); seed_ind++) {
+                    neighborhoodConnected->AddSeed(seed_vec_l[seed_ind]);
+                    seed_vec_global_l.push_back(seed_vec_l[seed_ind]);
+                }
                 seed_vec_l.clear();
-            }
-            if (!seed_vec_r.empty()) {
-                neighborhoodConnected->AddSeed(seed_vec_r[0]);
-                seed_vec_global_r.push_back(seed_vec_r[0]);
+                for (int seed_ind = 0; seed_ind < seed_vec_r.size(); seed_ind++) {
+                    neighborhoodConnected->AddSeed(seed_vec_r[seed_ind]);
+                    seed_vec_global_r.push_back(seed_vec_r[seed_ind]);
+                }
                 seed_vec_r.clear();
+            }
+            else {
+                // KEEP ONLY THE FIRST
+                if (!seed_vec_l.empty()) {
+                    neighborhoodConnected->AddSeed(seed_vec_l[0]);
+                    seed_vec_global_l.push_back(seed_vec_l[0]);
+                    seed_vec_l.clear();
+                }
+                if (!seed_vec_r.empty()) {
+                    neighborhoodConnected->AddSeed(seed_vec_r[0]);
+                    seed_vec_global_r.push_back(seed_vec_r[0]);
+                    seed_vec_r.clear();
+                }
             }
         }
         if (pixelIntensity_l > 0) {
@@ -1482,7 +1655,9 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
     writerT->SetInput(image_to_process);
     try
     {
-        writerT->Update();
+        if (!is_cleaned_from_non_ribs) {
+            writerT->Update();
+        }
     }
     catch (itk::ExceptionObject & err)
     {
@@ -1492,7 +1667,9 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
 
     //smoothing->SetInput(reader->GetOutput());
 
+    // IMP
     neighborhoodConnected->SetInput(image_to_process);
+    //neighborhoodConnected->SetInput(duplicator->GetOutput());
 
     //smoothing->SetNumberOfIterations(5);
     //smoothing->SetTimeStep(0.125);
@@ -1519,14 +1696,17 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
     neighborhoodConnected->Update();
 
     caster->SetInput(neighborhoodConnected->GetOutput());
-
+    caster->Update();
     name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow.nii.gz";
 
-    writerT->SetFileName(name_of_the_file);
-    writerT->SetInput(caster->GetOutput());
+    
     try
     {
-        writerT->Update();
+        if (!is_cleaned_from_non_ribs) {
+            writerT->SetFileName(name_of_the_file);
+            writerT->SetInput(caster->GetOutput());
+            writerT->Update();
+        }
     }
     catch (itk::ExceptionObject & err)
     {
@@ -1538,7 +1718,223 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
 
 }
 
-void label_ribs(ImageType::Pointer ribs_only, int number_of_test_file, std::vector<CirclesListType> circles_list, int arg_num_of_rib) {
+int count_reggrow_size(ImageType::Pointer ribs_only, ImageType::IndexType seed) {
+    int ret_val = 0;
+
+    ConnectedFilterType::Pointer neighborhoodConnected = ConnectedFilterType::New();
+
+    const PixelType lowerThreshold = 20;
+    const PixelType upperThreshold = 20;
+
+    neighborhoodConnected->SetLower(lowerThreshold);
+    neighborhoodConnected->SetUpper(upperThreshold);
+    ImageType::SizeType radius;
+    radius[0] = 0;   // two pixels along x
+    radius[1] = 0;   // two pixels along y
+    radius[2] = 0;   // two pixels along z
+    neighborhoodConnected->SetRadius(radius);
+    neighborhoodConnected->SetInput(ribs_only);
+    neighborhoodConnected->AddSeed(seed);
+    neighborhoodConnected->SetReplaceValue(1);
+    neighborhoodConnected->Update();
+
+
+    ImageType::IndexType index3d;
+    ImageType::SizeType size = ribs_only->GetLargestPossibleRegion().GetSize();
+
+    short pixelIntensity = 0;
+    for (int z = 0; z < size[2]; z++) {
+        for (int y = 0; y < size[1]; y++) {
+            for (int x = 0; x < size[0]; x++) {
+                index3d[0] = x;
+                index3d[1] = y;
+                index3d[2] = z;
+                pixelIntensity = neighborhoodConnected->GetOutput()->GetPixel(index3d);
+                
+                ret_val += pixelIntensity;
+
+            }
+        }
+    }
+
+    //std::cout << "SEED: " << seed[0] << " " << seed[1] << " " << seed[2] << std::endl;
+    //std::cout << "retv: " << ret_val << std::endl;
+
+
+    return ret_val;
+}
+
+int count_non_zero_vox(ImageType::Pointer img) {
+    int ret_val = 0;
+
+
+    ImageType::IndexType index3d;
+    ImageType::SizeType size = img->GetLargestPossibleRegion().GetSize();
+
+    short pixelIntensity = 0;
+    for (int z = 0; z < size[2]; z++) {
+        for (int y = 0; y < size[1]; y++) {
+            for (int x = 0; x < size[0]; x++) {
+                index3d[0] = x;
+                index3d[1] = y;
+                index3d[2] = z;
+                pixelIntensity = img->GetPixel(index3d);
+                if (pixelIntensity > 0) {
+                    ret_val++;
+                }
+            }
+        }
+    }
+
+
+    return ret_val;
+}
+
+ImageType::IndexType get_optimal_seed(ImageType::Pointer ribs_only, std::vector<ImageType::IndexType> seed_vec, int begin, int end) {
+    ImageType::IndexType ret_val;
+    ImageType::IndexType temp;
+    //ret_val[0] = 217;
+    //ret_val[1] = 313;
+    //ret_val[2] = 8;
+
+    int max = -99999999;
+
+
+    for (int i = begin; i <= end; i++) {
+        temp = seed_vec[i];
+        //std::cout << temp[0] << " ";
+        //std::cout << temp[1] << " ";
+        //std::cout << temp[2] << " ";
+        //std::cout << "-----------------\n";
+
+    }
+    //std::cout << "======================\n";
+   
+    for (int i = begin; i <= end; i++) {
+        temp = seed_vec[i];
+        int reg_grow_volume = count_reggrow_size(ribs_only, temp);
+        if (reg_grow_volume >= max) {
+            max = reg_grow_volume;
+            ret_val[0] = temp[0];
+            ret_val[1] = temp[1];
+            ret_val[2] = temp[2];
+        }
+    }
+
+    return ret_val;
+}
+
+bool check_if_lapocka(std::vector<ImageType::IndexType> seed_vec, int begin, int end) {
+    bool is_lapocka = false;
+    if (begin - 1 < 0 || end + 1 >= seed_vec.size()) {
+        return is_lapocka;
+    }
+    else {
+        int before_z = seed_vec[begin - 1][2];
+        int after_z = seed_vec[end + 1][2];
+
+        int begin_z = seed_vec[begin][2];
+        int end_z = seed_vec[end][2];
+
+        if (before_z + 1 == begin_z && after_z - 1 == end_z) {
+            is_lapocka = true;
+        }
+    }
+
+    return is_lapocka;
+}
+
+// REMOVE NON RIBS
+ImageType::Pointer post_process(ImageType::Pointer input) {
+
+    ImageType::IndexType index3d;
+    ImageType::SizeType size = input->GetLargestPossibleRegion().GetSize();
+
+    short pixelIntensity = 0;
+    for (int z = 0; z < size[2]; z++) {
+        for (int y = 0; y < size[1]; y++) {
+            for (int x = 0; x < size[0]; x++) {
+                index3d[0] = x;
+                index3d[1] = y;
+                index3d[2] = z;
+                pixelIntensity = input->GetPixel(index3d);
+
+                if (pixelIntensity > 24) {
+                    input->SetPixel(index3d, 0);
+                }
+
+            }
+        }
+    }
+
+    return input;
+}
+
+
+ImageType::Pointer add_images(ImageType::Pointer img1, ImageType::Pointer img2) {
+
+    ImageType::IndexType index3d;
+    ImageType::SizeType size = img1->GetLargestPossibleRegion().GetSize();
+
+    short pixelIntensity_img1 = 0;
+    short pixelIntensity_img2 = 0;
+    for (int z = 0; z < size[2]; z++) {
+        for (int y = 0; y < size[1]; y++) {
+            for (int x = 0; x < size[0]; x++) {
+                index3d[0] = x;
+                index3d[1] = y;
+                index3d[2] = z;
+                pixelIntensity_img1 = img1->GetPixel(index3d);
+                pixelIntensity_img2 = img2->GetPixel(index3d);
+
+                if (pixelIntensity_img1 == 0) {
+                    img1->SetPixel(index3d, pixelIntensity_img2);
+                }
+            }
+        }
+    }
+
+    return img1;
+}
+
+void draw_line_for_vertebra(ImageType::Pointer img, ImageType::IndexType index, std::vector<CirclesListType> circles_list) {
+    ImageType::IndexType index3d;
+    ImageType::SizeType size = img->GetLargestPossibleRegion().GetSize();
+    if (size[2] <= index[2]) {
+        std::cout << "BAD VERTEBRA LINE" << std::endl;
+        return;
+    }
+    
+    index3d[2] = index[2];
+
+    short pixelIntensity = 1;
+    CirclesListType::const_iterator itCircles = circles_list[index[2]].begin();
+    
+    int x = (*itCircles)->GetObjectToParentTransform()->GetOffset()[0] - 40;
+    
+    int x_end = x + 80;
+
+    for (; x < x_end; x++) {
+
+        int y = (*itCircles)->GetObjectToParentTransform()->GetOffset()[1] - 40;
+        int y_end = y + 80;
+
+        for (; y < y_end; y++) {
+            index3d[0] = x;
+            index3d[1] = y;
+            img->SetPixel(index3d, pixelIntensity);
+        }
+    }
+}
+
+void label_ribs(ImageType::Pointer ribs_only, ImageType::Pointer ribs_only_labeled, int number_of_test_file, std::vector<CirclesListType> circles_list, int arg_num_of_rib) {
+    //ribs_only = open_on_2d_slices(ribs_only, 1, 20);
+    std::vector<ImageType::IndexType> optimal_seed_vec_l;
+    std::vector<ImageType::IndexType> optimal_seed_vec_r;
+
+    std::vector<ImageType::IndexType> vertebra_lines_vec_l;
+    std::vector<ImageType::IndexType> vertebra_lines_vec_r;
+
     using WriterTypeT = itk::ImageFileWriter< ImageType >;
     WriterTypeT::Pointer writerT = WriterTypeT::New();
     ConnectedFilterType::Pointer neighborhoodConnected = ConnectedFilterType::New();
@@ -1554,6 +1950,11 @@ void label_ribs(ImageType::Pointer ribs_only, int number_of_test_file, std::vect
 
     ImageType::Pointer ribs_labeled = duplicator->GetOutput();
     ribs_labeled->FillBuffer(0);
+
+    duplicator->SetInputImage(ribs_labeled);
+    duplicator->Update();
+
+    ImageType::Pointer vertebra_lines = duplicator->GetOutput();
 
     // for (ImageType::IndexType index3d_temp_l : seed_vec_global_l) {
     //     neighborhoodConnected->AddSeed(index3d_temp_l);
@@ -1596,56 +1997,156 @@ void label_ribs(ImageType::Pointer ribs_only, int number_of_test_file, std::vect
     addFilter->SetInput2(ribs_labeled);
     addFilter->Update();
 
+    int is_lapocka = false;
+    int ind_l = 1;
+    int ind_r = 2;
+    int min_size_of_rib = 10;
 
+    std::set<int> added_label_values;
 
     for (int i = 0; i < seed_vec_global_l.size(); i++) {
-        int j = 1;
-        while (i + j < seed_vec_global_l.size() - 1 && (seed_vec_global_l[i + j].GetIndex()[2] - seed_vec_global_l[i + j - 1].GetIndex()[2]) == 1) {
+        int j = 0;
+        while (i + j < seed_vec_global_l.size() - 1 && ((seed_vec_global_l[i + j + 1].GetIndex()[2] - seed_vec_global_l[i + j].GetIndex()[2]) == 1) && std::abs(seed_vec_global_l[i + j + 1].GetIndex()[1] - seed_vec_global_l[i + j].GetIndex()[1]) < 19) {
+        //while (i + j < seed_vec_global_l.size() - 1 && ((seed_vec_global_l[i + j + 1].GetIndex()[2] - seed_vec_global_l[i + j].GetIndex()[2]) == 1)) {
             j++;
         }
-        seed_vec_global_l.erase(seed_vec_global_l.begin() + i + 1, seed_vec_global_l.begin() + i + j);
-    }
+        //seed_vec_global_l.erase(seed_vec_global_l.begin() + i + 1, seed_vec_global_l.begin() + i + j);
 
+        //is_lapocka = check_if_lapocka(seed_vec_global_l, i, i + j);
+
+        int begin = i;
+        int end = i + j;
+
+       
+        //if (!is_lapocka) {
+        //optimal_seed_vec_l.push_back(get_optimal_seed(ribs_only, seed_vec_global_l, i, i + j));
+        
+        // Draw vertebra line
+        //draw_line_for_vertebra(vertebra_lines, seed_vec_global_l[begin]);
+        //draw_line_for_vertebra(vertebra_lines, seed_vec_global_l[end]);
+        vertebra_lines_vec_l.push_back(seed_vec_global_l[end]);
+
+        for (int seed_i = begin; seed_i <= end; seed_i++) {
+            //for (ImageType::IndexType index3d_temp_l : test_seeds) {
+            //std::cout << seed_vec_global_l[seed_i] << "--------+" << std::endl;
+            //std::cout << "i: " << ind_l << std::endl;
+            neighborhoodConnected->AddSeed(seed_vec_global_l[seed_i]);
+        
+        }
+
+        neighborhoodConnected->AddSeed(seed_vec_global_l[begin]);
+            
+        //std::cout << "======================+\n";
+
+        //if (count_non_zero_vox(neighborhoodConnected->GetOutput()) > min_size_of_rib) {
+        if (added_label_values.find(ribs_only_labeled->GetPixel(seed_vec_global_l[begin])) == added_label_values.end()) {   
+            neighborhoodConnected->SetReplaceValue(ind_l);
+            neighborhoodConnected->Update();
+
+            ribs_labeled = add_images(ribs_labeled, neighborhoodConnected->GetOutput());
+            //ribs_labeled = add_images(ribs_labeled, close_on_2d_slices(neighborhoodConnected->GetOutput(), 2, ind_l));
+            ind_l += 2;
+            added_label_values.insert(ribs_only_labeled->GetPixel(seed_vec_global_l[begin]));
+        }
+        neighborhoodConnected->ClearSeeds();
+        //}
+        i = i + j;
+    }
+    neighborhoodConnected->ClearSeeds();
     for (int i = 0; i < seed_vec_global_r.size(); i++) {
-        int j = 1;
-        while (i + j < seed_vec_global_r.size() && (seed_vec_global_r[i + j].GetIndex()[2] - seed_vec_global_r[i + j - 1].GetIndex()[2]) == 1) {
+        int j = 0;
+        while (i + j < seed_vec_global_r.size() - 1 && ((seed_vec_global_r[i + j + 1].GetIndex()[2] - seed_vec_global_r[i + j].GetIndex()[2]) == 1) && std::abs(seed_vec_global_r[i + j + 1].GetIndex()[1] - seed_vec_global_r[i + j].GetIndex()[1]) < 19) {
+        //while (i + j < seed_vec_global_r.size() - 1 && ((seed_vec_global_r[i + j + 1].GetIndex()[2] - seed_vec_global_r[i + j].GetIndex()[2]) == 1)) {
             j++;
         }
-        seed_vec_global_r.erase(seed_vec_global_r.begin() + i + 1, seed_vec_global_r.begin() + i + j);
-    }
+        //seed_vec_global_r.erase(seed_vec_global_r.begin() + i + 1, seed_vec_global_r.begin() + i + j);
 
+        //is_lapocka = check_if_lapocka(seed_vec_global_r, i, i + j);
 
-    int i = 1;
-    for (ImageType::IndexType index3d_temp_l : seed_vec_global_l) {
-    //for (ImageType::IndexType index3d_temp_l : test_seeds) {
-        std::cout << index3d_temp_l << std::endl;
+        int begin = i;
+        int end = i + j;
+
+        // Draw vertebra line
+        //draw_line_for_vertebra(vertebra_lines, seed_vec_global_r[begin]);
+        //draw_line_for_vertebra(vertebra_lines, seed_vec_global_r[end]);
+        vertebra_lines_vec_r.push_back(seed_vec_global_r[end]);
+        //if (!is_lapocka) {
+        //optimal_seed_vec_r.push_back(get_optimal_seed(ribs_only, seed_vec_global_r, i, i + j));
+            
+        for (int seed_i = begin; seed_i <= end; seed_i++) {
+            for (ImageType::IndexType index3d_temp_l : test_seeds) {
+                std::cout << seed_vec_global_r[seed_i] << "--------+" << std::endl;
+                std::cout << "i: " << ind_r << std::endl;
+            }
+            neighborhoodConnected->AddSeed(seed_vec_global_r[seed_i]);
+        
+        }
+
+        neighborhoodConnected->AddSeed(seed_vec_global_r[begin]);
+
+        std::cout << "======================+\n";
+        //if (count_non_zero_vox(neighborhoodConnected->GetOutput()) > min_size_of_rib) {
+        if (added_label_values.find(ribs_only_labeled->GetPixel(seed_vec_global_r[begin])) == added_label_values.end()) {
+            neighborhoodConnected->SetReplaceValue(ind_r);
+            neighborhoodConnected->Update();
+
+            ribs_labeled = add_images(ribs_labeled, neighborhoodConnected->GetOutput());
+            //ribs_labeled = add_images(ribs_labeled, close_on_2d_slices(neighborhoodConnected->GetOutput(), 2, ind_r));
+            ind_r += 2;
+            added_label_values.insert(ribs_only_labeled->GetPixel(seed_vec_global_r[begin]));
+        }
         neighborhoodConnected->ClearSeeds();
-        std::cout << "i: " << i << std::endl;
-        neighborhoodConnected->AddSeed(index3d_temp_l);
-        neighborhoodConnected->SetReplaceValue(i);
-        neighborhoodConnected->Update();
-
-        addFilter->SetInput1(addFilter->GetOutput());
-        addFilter->SetInput2(neighborhoodConnected->GetOutput());
-        addFilter->Update();
-        i += 2;
+        //}
+        i = i + j;
     }
 
-    i = 2;
-    for (ImageType::IndexType index3d_temp_r : seed_vec_global_r) {
-        //for (ImageType::IndexType index3d_temp_l : test_seeds) {
-        std::cout << index3d_temp_r << std::endl;
-        neighborhoodConnected->ClearSeeds();
-        std::cout << "i: " << i << std::endl;
-        neighborhoodConnected->AddSeed(index3d_temp_r);
-        neighborhoodConnected->SetReplaceValue(i);
-        neighborhoodConnected->Update();
+    for (int i = 0; i < vertebra_lines_vec_l.size(); i++) {
+         
+        int avg = std::ceil((vertebra_lines_vec_l[i][2] + vertebra_lines_vec_r[i][2])/2);
+        ImageType::IndexType index;
+        index[2] = avg;
 
-        addFilter->SetInput1(addFilter->GetOutput());
-        addFilter->SetInput2(neighborhoodConnected->GetOutput());
-        addFilter->Update();
-        i += 2;
+        draw_line_for_vertebra(vertebra_lines, index, circles_list);
     }
+
+
+    // // OLD
+    // //for (ImageType::IndexType index3d_temp_l : seed_vec_global_l) {
+    // for (ImageType::IndexType index3d_temp_l : optimal_seed_vec_l) {
+    // //for (ImageType::IndexType index3d_temp_l : test_seeds) {
+    //     std::cout << index3d_temp_l << std::endl;
+    //     neighborhoodConnected->ClearSeeds();
+    //     std::cout << "i: " << ind_l << std::endl;
+    //     neighborhoodConnected->AddSeed(index3d_temp_l);
+    //     neighborhoodConnected->SetReplaceValue(ind_l);
+    //     neighborhoodConnected->Update();
+    // 
+    //     ribs_labeled = add_images(ribs_labeled, neighborhoodConnected->GetOutput());
+    // 
+    //     //addFilter->SetInput1(addFilter->GetOutput());
+    //     //addFilter->SetInput2(neighborhoodConnected->GetOutput());
+    //     //addFilter->Update();
+    //     ind_l += 2;
+    // }
+    // 
+    // 
+    // //for (ImageType::IndexType index3d_temp_r : seed_vec_global_r) {
+    // for (ImageType::IndexType index3d_temp_r : optimal_seed_vec_r) {
+    //     //for (ImageType::IndexType index3d_temp_l : test_seeds) {
+    //     std::cout << index3d_temp_r << std::endl;
+    //     neighborhoodConnected->ClearSeeds();
+    //     std::cout << "i: " << ind_r << std::endl;
+    //     neighborhoodConnected->AddSeed(index3d_temp_r);
+    //     neighborhoodConnected->SetReplaceValue(ind_r);
+    //     neighborhoodConnected->Update();
+    // 
+    //     ribs_labeled = add_images(ribs_labeled, neighborhoodConnected->GetOutput());
+    // 
+    //     //addFilter->SetInput1(addFilter->GetOutput());
+    //     //addFilter->SetInput2(neighborhoodConnected->GetOutput());
+    //     //addFilter->Update();
+    //     ind_r += 2;
+    // }
 
     //seed[0] = 1;
     //seed[1] = 425;
@@ -1662,10 +2163,26 @@ void label_ribs(ImageType::Pointer ribs_only, int number_of_test_file, std::vect
 
     caster->SetInput(neighborhoodConnected->GetOutput());
 
-    std::string name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_labed.nii.gz";
+    std::string name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_mylabel.nii.gz";
 
     writerT->SetFileName(name_of_the_file);
-    writerT->SetInput(addFilter->GetOutput());
+    //writerT->SetInput(addFilter->GetOutput());
+    writerT->SetInput(ribs_labeled);
+    //writerT->SetInput(post_process(addFilter->GetOutput()));
+    try
+    {
+        writerT->Update();
+    }
+    catch (itk::ExceptionObject & err)
+    {
+        std::cerr << "ExceptionObject caught !" << std::endl;
+        std::cerr << err << std::endl;
+    }
+    name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_vert_line.nii.gz";
+    writerT->SetFileName(name_of_the_file);
+    //writerT->SetInput(addFilter->GetOutput());
+    writerT->SetInput(vertebra_lines);
+    //writerT->SetInput(post_process(addFilter->GetOutput()));
     try
     {
         writerT->Update();
@@ -1755,6 +2272,375 @@ void write_hist(ScalarImageToHistogramGeneratorType::Pointer a, int number_of_te
     myfile.close();
 }
 
+ImageType::Pointer label_ribs_ccomponents_statistic(ImageType::Pointer original, ImageType::Pointer ribs_only, int number_of_test_file) {
+
+    ImageType::Pointer ret_val;
+
+    ConnectedComponentImageFilterType::Pointer connected = ConnectedComponentImageFilterType::New();
+    //connected->FullyConnectedOn();
+    connected->SetInput(ribs_only);
+    connected->Update();
+
+    std::cout << "Number of objects: " << connected->GetObjectCount() << std::endl;
+
+    std::string name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_labed_cc.nii.gz";
+    using WriterTypeT = itk::ImageFileWriter< ImageType >;
+    WriterTypeT::Pointer writerT = WriterTypeT::New();
+    writerT->SetFileName(name_of_the_file);
+    //writerT->SetInput(addFilter->GetOutput());
+    writerT->SetInput(connected->GetOutput());
+    //writerT->SetInput(post_process(addFilter->GetOutput()));
+    try
+    {
+        writerT->Update();
+    }
+    catch (itk::ExceptionObject & err)
+    {
+        std::cerr << "ExceptionObject caught !" << std::endl;
+        std::cerr << err << std::endl;
+    }
+
+    I2LType::Pointer i2l = I2LType::New();
+    i2l->SetInput(connected->GetOutput());
+    i2l->SetComputePerimeter(false);
+    i2l->Update();
+
+    LabelMapType * labelMap = i2l->GetOutput();
+
+    int labelNumberBeforeFilters = labelMap->GetNumberOfLabelObjects();
+
+    std::vector<int> remove_vec;
+
+    // Retrieve all attributes
+    for (unsigned int n = 0; n < labelMap->GetNumberOfLabelObjects(); n++)
+    {
+        std::cout << "---------------------" << std::endl;
+        ShapeLabelObjectType * labelObject = labelMap->GetNthLabelObject(n);
+        int label_no = itk::NumericTraits<LabelMapType::LabelType>::PrintType(labelObject->GetLabel());
+
+        //if (label_no ==7 || label_no == 29 || label_no == 27) 
+        {
+
+            std::cout << "Label: " << label_no << std::endl;
+            //std::cout << "    BoundingBox: " << labelObject->GetBoundingBox() << std::endl;
+            //--std::cout << "    NumberOfPixels: " << labelObject->GetNumberOfPixels() << std::endl;
+            // std::cout << "    PhysicalSize: " << labelObject->GetPhysicalSize() << std::endl;
+            std::cout << "    Centroid: " << labelObject->GetCentroid() << std::endl;
+            // std::cout << "    NumberOfPixelsOnBorder: " << labelObject->GetNumberOfPixelsOnBorder() << std::endl;
+            // std::cout << "    PerimeterOnBorder: " << labelObject->GetPerimeterOnBorder() << std::endl;
+            // std::cout << "    FeretDiameter: " << labelObject->GetFeretDiameter() << std::endl;
+            std::cout << "    PrincipalMoments: " << labelObject->GetPrincipalMoments() << std::endl;
+            //std::cout << "    PrincipalAxes: " << labelObject->GetPrincipalAxes() << std::endl;
+            std::cout << "    Elongation: " << labelObject->GetElongation() << std::endl;
+            // std::cout << "    Perimeter: " << labelObject->GetPerimeter() << std::endl;
+            // std::cout << "    Roundness: " << labelObject->GetRoundness() << std::endl;
+            // std::cout << "    EquivalentSphericalRadius: " << labelObject->GetEquivalentSphericalRadius() << std::endl;
+            // std::cout << "    EquivalentSphericalPerimeter: " << labelObject->GetEquivalentSphericalPerimeter() << std::endl;
+            // std::cout << "    EquivalentEllipsoidDiameter: " << labelObject->GetEquivalentEllipsoidDiameter() << std::endl;
+            // std::cout << "    Flatness: " << labelObject->GetFlatness() << std::endl;
+            // std::cout << "    PerimeterOnBorderRatio: " << labelObject->GetPerimeterOnBorderRatio() << std::endl;
+
+        }
+        double val = labelObject->GetPrincipalMoments()[0];
+
+        //if (!(0.5 < labelObject->GetPrincipalMoments()[0] && labelObject->GetPrincipalMoments()[0] < 30)) {
+        if (!(labelObject->GetPrincipalMoments()[0] < 30)) {
+            //if (label_no != 0 && labelObject->GetElongation() < 3) {
+            remove_vec.push_back(label_no);
+            std::cout << "The label " << label_no << " has been removed" << std::endl;
+            std::cout << "++++++++++++++++++++" << std::endl;
+        }
+        else {
+            std::cout << "---------------------" << std::endl;
+        }
+    }
+
+    for (int temp : remove_vec) {
+        std::cout << " LABEL: " << temp << std::endl;
+        labelMap->RemoveLabel(temp);
+    }
+
+
+    LabelMapToLabelImageFilterType::Pointer labelImageConverter = LabelMapToLabelImageFilterType::New();
+    labelImageConverter->SetInput(labelMap);
+
+    int num_of_ribs = 24;
+
+    std::cout << "Objects removed: " << labelNumberBeforeFilters - labelMap->GetNumberOfLabelObjects() << std::endl;
+    std::cout << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
+    std::cout << "Num of labels after filter " << labelMap->GetNumberOfLabelObjects() << std::endl;
+
+    std::cerr << "---------------------" << std::endl;
+    std::cerr << "Objects removed: " << labelNumberBeforeFilters - labelMap->GetNumberOfLabelObjects() << std::endl;
+    std::cerr << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
+    std::cerr << "Num of labels after filter " << labelMap->GetNumberOfLabelObjects() << std::endl;
+    std::cerr << "---------------------" << std::endl;
+
+    if (labelMap->GetNumberOfLabelObjects() > num_of_ribs) {
+
+        std::cerr << "To much objects there!!!" << std::endl;
+
+        LabelShapeKeepNObjectsImageFilterType::Pointer labelShapeKeepNObjectsImageFilter =
+            LabelShapeKeepNObjectsImageFilterType::New();
+        labelShapeKeepNObjectsImageFilter->SetInput(labelImageConverter->GetOutput());
+        labelShapeKeepNObjectsImageFilter->SetBackgroundValue(0);
+        labelShapeKeepNObjectsImageFilter->SetNumberOfObjects(num_of_ribs);
+        labelShapeKeepNObjectsImageFilter->ReverseOrderingOff();
+
+        labelShapeKeepNObjectsImageFilter->SetAttribute(
+            //LabelShapeKeepNObjectsImageFilterType::LabelObjectType::NUMBER_OF_PIXELS);
+            //LabelShapeKeepNObjectsImageFilterType::LabelObjectType::BOUNDING_BOX);
+            LabelShapeKeepNObjectsImageFilterType::LabelObjectType::ELONGATION);
+        //LabelShapeKeepNObjectsImageFilterType::LabelObjectType::PRINCIPAL_MOMENTS);
+        labelShapeKeepNObjectsImageFilter->Update();
+
+        writerT->SetInput(labelShapeKeepNObjectsImageFilter->GetOutput());
+        ret_val = labelShapeKeepNObjectsImageFilter->GetOutput();
+
+        std::cout << "Objects removed: " << labelNumberBeforeFilters - labelShapeKeepNObjectsImageFilter->GetNumberOfObjects() << std::endl;
+        std::cout << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
+        std::cout << "Num of labels after filter FINAL" << labelShapeKeepNObjectsImageFilter->GetNumberOfObjects() << std::endl;
+
+        std::cerr << "---------------------" << std::endl;
+        std::cerr << "Objects removed: " << labelNumberBeforeFilters - labelShapeKeepNObjectsImageFilter->GetNumberOfObjects() << std::endl;
+        std::cerr << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
+        std::cerr << "Num of labels after filter FINAL " << labelShapeKeepNObjectsImageFilter->GetNumberOfObjects() << std::endl;
+        std::cerr << "---------------------" << std::endl;
+
+
+    }
+    else {
+        writerT->SetInput(labelImageConverter->GetOutput());
+        ret_val = labelImageConverter->GetOutput();
+
+    }
+
+    name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_labed_cc_N.nii.gz";
+
+    writerT->SetFileName(name_of_the_file);
+    //writerT->SetInput(addFilter->GetOutput());
+
+    //writerT->SetInput(post_process(addFilter->GetOutput()));
+    try
+    {
+        writerT->Update();
+    }
+    catch (itk::ExceptionObject & err)
+    {
+        std::cerr << "ExceptionObject caught !" << std::endl;
+        std::cerr << err << std::endl;
+    }
+
+    return ret_val;
+}
+
+
+struct Label_Princ {
+    int label;
+    double princ_mom;
+};
+
+struct by_princ_mom {
+    bool operator()(Label_Princ const &a, Label_Princ const &b) const noexcept {
+        return a.princ_mom < b.princ_mom;
+    }
+};
+
+ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int number_of_test_file) {
+
+    ImageType::Pointer ret_val;
+
+    ConnectedComponentImageFilterType::Pointer connected = ConnectedComponentImageFilterType::New();
+    //connected->FullyConnectedOn();
+    connected->SetInput(ribs_only);
+    connected->Update();
+
+    std::cout << "Number of objects: " << connected->GetObjectCount() << std::endl;
+
+    std::string name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_labed_cc.nii.gz";
+    using WriterTypeT = itk::ImageFileWriter< ImageType >;
+    WriterTypeT::Pointer writerT = WriterTypeT::New();
+    writerT->SetFileName(name_of_the_file);
+    //writerT->SetInput(addFilter->GetOutput());
+    writerT->SetInput(connected->GetOutput());
+    //writerT->SetInput(post_process(addFilter->GetOutput()));
+    try
+    {
+        writerT->Update();
+    }
+    catch (itk::ExceptionObject & err)
+    {
+        std::cerr << "ExceptionObject caught !" << std::endl;
+        std::cerr << err << std::endl;
+    }
+
+    I2LType::Pointer i2l = I2LType::New();
+    i2l->SetInput(connected->GetOutput());
+    i2l->SetComputePerimeter(false);
+    i2l->Update();
+
+    LabelMapType * labelMap = i2l->GetOutput();
+
+    int labelNumberBeforeFilters = labelMap->GetNumberOfLabelObjects();
+
+    std::vector<int> remove_vec;
+    std::vector<Label_Princ> Label_Princ_vec;
+
+    // Retrieve all attributes
+    for (unsigned int n = 0; n < labelMap->GetNumberOfLabelObjects(); n++)
+    {
+        std::cout << "---------------------" << std::endl;
+        ShapeLabelObjectType * labelObject = labelMap->GetNthLabelObject(n);
+        int label_no = itk::NumericTraits<LabelMapType::LabelType>::PrintType(labelObject->GetLabel());
+
+        //if (label_no ==7 || label_no == 29 || label_no == 27) 
+        {
+
+            std::cout << "Label: " << label_no << std::endl;
+            //std::cout << "    BoundingBox: " << labelObject->GetBoundingBox() << std::endl;
+            std::cout << "    NumberOfPixels: " << labelObject->GetNumberOfPixels() << std::endl;
+            // std::cout << "    PhysicalSize: " << labelObject->GetPhysicalSize() << std::endl;
+            std::cout << "    Centroid: " << labelObject->GetCentroid() << std::endl;
+            // std::cout << "    NumberOfPixelsOnBorder: " << labelObject->GetNumberOfPixelsOnBorder() << std::endl;
+            // std::cout << "    PerimeterOnBorder: " << labelObject->GetPerimeterOnBorder() << std::endl;
+            // std::cout << "    FeretDiameter: " << labelObject->GetFeretDiameter() << std::endl;
+            std::cout << "    PrincipalMoments: " << labelObject->GetPrincipalMoments() << std::endl;
+            //std::cout << "    PrincipalAxes: " << labelObject->GetPrincipalAxes() << std::endl;
+            std::cout << "    Elongation: " << labelObject->GetElongation() << std::endl;
+            // std::cout << "    Perimeter: " << labelObject->GetPerimeter() << std::endl;
+            // std::cout << "    Roundness: " << labelObject->GetRoundness() << std::endl;
+            // std::cout << "    EquivalentSphericalRadius: " << labelObject->GetEquivalentSphericalRadius() << std::endl;
+            // std::cout << "    EquivalentSphericalPerimeter: " << labelObject->GetEquivalentSphericalPerimeter() << std::endl;
+            // std::cout << "    EquivalentEllipsoidDiameter: " << labelObject->GetEquivalentEllipsoidDiameter() << std::endl;
+            // std::cout << "    Flatness: " << labelObject->GetFlatness() << std::endl;
+            // std::cout << "    PerimeterOnBorderRatio: " << labelObject->GetPerimeterOnBorderRatio() << std::endl;
+
+        }
+        double val = labelObject->GetPrincipalMoments()[0];
+
+        //if (!(0.5 < labelObject->GetPrincipalMoments()[0] && labelObject->GetPrincipalMoments()[0] < 30)) {
+        if (!(labelObject->GetPrincipalMoments()[0] < 50)) {
+        //if (label_no != 0 && labelObject->GetElongation() < 3) {
+            remove_vec.push_back(label_no);
+            std::cout << "The label " << label_no << " has been removed" << std::endl;
+            std::cout << "++++++++++++++++++++" << std::endl;
+        } else {
+           std::cout << "---------------------"<<std::endl;
+        }
+    }
+
+    for (int temp : remove_vec) {
+        std::cout << " LABEL: " << temp << std::endl;
+        labelMap->RemoveLabel(temp);
+    }
+
+    remove_vec.clear();
+
+    LabelMapToLabelImageFilterType::Pointer labelImageConverter = LabelMapToLabelImageFilterType::New();
+    labelImageConverter->SetInput(labelMap);
+
+    int num_of_ribs = 24;
+
+    std::cout << "Objects removed: " << labelNumberBeforeFilters - labelMap->GetNumberOfLabelObjects() << std::endl;
+    std::cout << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
+    std::cout << "Num of labels after filter " << labelMap->GetNumberOfLabelObjects() << std::endl;
+
+    std::cerr << "---------------------" << std::endl;
+    std::cerr << "Objects removed: " << labelNumberBeforeFilters - labelMap->GetNumberOfLabelObjects() << std::endl;
+    std::cerr << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
+    std::cerr << "Num of labels after filter " << labelMap->GetNumberOfLabelObjects() << std::endl;
+    std::cerr << "---------------------" << std::endl;
+
+    if (labelMap->GetNumberOfLabelObjects() > num_of_ribs) {
+        
+        std::cerr << "To much objects there!!!" << std::endl;
+
+        for (unsigned int n = 0; n < labelMap->GetNumberOfLabelObjects(); n++)
+        {
+            ShapeLabelObjectType * labelObject = labelMap->GetNthLabelObject(n);
+            int label_no = itk::NumericTraits<LabelMapType::LabelType>::PrintType(labelObject->GetLabel());
+            //std::cout << "Label: " << label_no << std::endl;
+            
+            Label_Princ temp;
+            temp.label = label_no;
+            temp.princ_mom = labelObject->GetPrincipalMoments()[0];
+
+            Label_Princ_vec.push_back(temp);
+        }
+        int num_of_labels = labelMap->GetNumberOfLabelObjects();
+        std::sort(Label_Princ_vec.begin(), Label_Princ_vec.end(), by_princ_mom());
+
+        for (int i = 0; i < num_of_labels - num_of_ribs; i++) {
+            std::cout << " LABEL: " << Label_Princ_vec[i].label << std::endl;
+            labelMap->RemoveLabel(Label_Princ_vec[i].label);
+        }
+        labelMap->Update();
+        LabelMapToLabelImageFilterType::Pointer labelImageConverter = LabelMapToLabelImageFilterType::New();
+        labelImageConverter->SetInput(labelMap);
+        labelImageConverter->Update();
+        writerT->SetInput(labelImageConverter->GetOutput());
+        ret_val = labelImageConverter->GetOutput();
+
+       // LabelShapeKeepNObjectsImageFilterType::Pointer labelShapeKeepNObjectsImageFilter =
+       //     LabelShapeKeepNObjectsImageFilterType::New();
+       // labelShapeKeepNObjectsImageFilter->SetInput(labelImageConverter->GetOutput());
+       // labelShapeKeepNObjectsImageFilter->SetBackgroundValue(0);
+       // labelShapeKeepNObjectsImageFilter->SetNumberOfObjects(num_of_ribs);
+       // labelShapeKeepNObjectsImageFilter->ReverseOrderingOff();
+       //
+       // labelShapeKeepNObjectsImageFilter->SetAttribute(
+       //     //LabelShapeKeepNObjectsImageFilterType::LabelObjectType::NUMBER_OF_PIXELS);
+       //     //LabelShapeKeepNObjectsImageFilterType::LabelObjectType::BOUNDING_BOX);
+       //     LabelShapeKeepNObjectsImageFilterType::LabelObjectType::ELONGATION);
+       //     //LabelShapeKeepNObjectsImageFilterType::LabelObjectType::PRINCIPAL_MOMENTS);
+       // labelShapeKeepNObjectsImageFilter->Update();
+       // 
+       // writerT->SetInput(labelShapeKeepNObjectsImageFilter->GetOutput());
+       // ret_val = labelShapeKeepNObjectsImageFilter->GetOutput();
+        
+
+
+        //std::cout << "Objects removed: " << labelNumberBeforeFilters - labelShapeKeepNObjectsImageFilter->GetNumberOfObjects() << std::endl;
+        std::cout << "Objects removed: " << labelNumberBeforeFilters - labelMap->GetNumberOfLabelObjects() << std::endl;
+        std::cout << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
+        std::cout << "Num of labels after filter FINAL " << labelMap->GetNumberOfLabelObjects() << std::endl;
+
+        std::cerr << "---------------------" << std::endl;
+        std::cerr << "Objects removed: " << labelNumberBeforeFilters - labelMap->GetNumberOfLabelObjects() << std::endl;
+        std::cerr << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
+        std::cerr << "Num of labels after filter FINAL " << labelMap->GetNumberOfLabelObjects() << std::endl;
+        std::cerr << "---------------------" << std::endl;
+
+
+    }
+    else {
+        writerT->SetInput(labelImageConverter->GetOutput());
+        ret_val = labelImageConverter->GetOutput();
+    
+    }
+
+
+    // TODO: closing
+
+    name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_labed_cc_N.nii.gz";
+
+    writerT->SetFileName(name_of_the_file);
+    //writerT->SetInput(addFilter->GetOutput());
+    
+    //writerT->SetInput(post_process(addFilter->GetOutput()));
+    try
+    {
+        writerT->Update();
+    }
+    catch (itk::ExceptionObject & err)
+    {
+        std::cerr << "ExceptionObject caught !" << std::endl;
+        std::cerr << err << std::endl;
+    }
+
+    return ret_val;
+}
+
 /*
 -20-
 -21-
@@ -1790,26 +2676,74 @@ void write_hist(ScalarImageToHistogramGeneratorType::Pointer a, int number_of_te
 
 //std::string files[] = { "bigtest\\lung_20.nii.gz", "bigtest\\lung_21.nii.gz", "bigtest\\lung_57.nii.gz" };
 //std::string files[] = { "bigtest\\lung_02.nii.gz"};
+//std::string files[] = { "bigtest\\lung_12.nii.gz"};
 
 //std::string files[] = { "bigtest\\lung_20.nii.gz", "bigtest\\lung_14.nii.gz"};
 
 // TEST labeling on this
 
 //std::string files[] = { "bigtest\\lung_08.nii.gz" };
+//std::string files[] = { "bigtest\\lung_30.nii.gz" };
+//std::string files[] = { "bigtest\\lung_01.nii.gz" };
+//std::string files[] = { "bigtest\\lung_03.nii.gz" };
+//std::string files[] = { "bigtest\\lung_01.nii.gz" };
+//std::string files[] = { "bigtest\\lung_29.nii.gz" }; // hiányzik
+//std::string files[] = { "bigtest\\lung_33.nii.gz" }; // sok!!
+
+//std::string files[] = { "bigtest\\lung_28.nii.gz" }; // lapocka!!
+//std::string files[] = { "bigtest\\lung_49.nii.gz" }; // lapocka!!
+
+
+//std::string files[] = { "bigtest\\lung_34.nii.gz" }; // ÉRDEKES, KEVEÉS CSONT!!
+
+//std::string files[] = { "bigtest\\lung_33.nii.gz" };
+
+//std::string files[] = { "bigtest\\lung_03.nii.gz" };
+
+// HARD!!
+//std::string files[] = { "bigtest\\lung_07.nii.gz", "bigtest\\lung_10.nii.gz", "bigtest\\lung_12.nii.gz"};
+
+//std::string files[] = { "bigtest\\lung_53.nii.gz"};
+//std::string files[] = { "bigtest\\lung_60.nii.gz"};
+//std::string files[] = { "bigtest\\lung_24.nii.gz"};
+//std::string files[] = { "bigtest\\lung_30.nii.gz"};
+//std::string files[] = { "bigtest\\lung_40.nii.gz"};
+//std::string files[] = { "bigtest\\lung_44.nii.gz"};
+
+
+//std::string files[] = { "bigtest\\lung_12.nii.gz"}; //MUTAT csigolya
+//std::string files[] = { "bigtest\\lung_46.nii.gz"}; //MUTAT csigolya
+//std::string files[] = { "bigtest\\lung_39.nii.gz"}; //MUTAT csigolya
+//std::string files[] = { "bigtest\\lung_26.nii.gz"}; //MUTAT csigolya
+//std::string files[] = { "bigtest\\lung_14.nii.gz"}; //MUTAT csigolya
+//std::string files[] = { "bigtest\\lung_13.nii.gz"}; //MUTAT csigolya
+std::string files[] = { "bigtest\\lung_09.nii.gz"}; //MUTAT csigolya
+
+
+//std::string files[] = { "bigtest\\lung_27.nii.gz"};
+
+// zárás mutat
+
+
+//SCLICE DIFF
+
+//std::string files[] = { "slice_diff\\lung_01.nii.gz", "slice_diff\\lung_02.nii.gz" };
 
 int main(int argc, char ** argv)
 {
+    int start_from_this_file = 1;
 
-    std::vector<std::string> files;
-    for (int i = 1; i <= 60; i++) {
-        if (i > 9) {
-            files.push_back("bigtest\\lung_" + std::to_string(i) + ".nii.gz");
-    
-        }
-        else {
-            files.push_back("bigtest\\lung_0" + std::to_string(i) + ".nii.gz");
-        }
-    }
+
+   //std::vector<std::string> files;
+   //for (int i = start_from_this_file; i <= 60; i++) {
+   //    if (i > 9) {
+   //        files.push_back("bigtest\\lung_" + std::to_string(i) + ".nii.gz");
+   //
+   //    }
+   //    else {
+   //        files.push_back("bigtest\\lung_0" + std::to_string(i) + ".nii.gz");
+   //    }
+   //}
 
 
     // if (argv[1] != nullptr) {
@@ -1817,12 +2751,22 @@ int main(int argc, char ** argv)
     //     files.push_back(argv[1]);
     // }
 
-    int number_of_test_file = 1;
+    int number_of_test_file = start_from_this_file;
     for (std::string file : files) {
         if ("test\\8LA_LD_01.nii.gz" == file) {
             number_of_test_file++;
             continue;
         }
+
+        // LOG
+
+        std::cerr << "FILE_no: " << number_of_test_file << std::endl;
+        //-------------
+        std::ofstream out(std::to_string(number_of_test_file) + "_zLOG.txt");
+        std::streambuf *coutbuf = std::cout.rdbuf(); //save old buf
+        std::cout.rdbuf(out.rdbuf()); //redirect std::cout to out.txt!
+        //-------------
+
         using WriterTypeT = itk::ImageFileWriter< ImageType >;
         WriterTypeT::Pointer writerT = WriterTypeT::New();
         //// Verify the number of parameters in the command line
@@ -1949,9 +2893,9 @@ int main(int argc, char ** argv)
         threshFilter->Update();
 
 
-        // CLOSING
-        const ImageType::Pointer inputImage = close_on_2d_slices(threshFilter->GetOutput());
-        //const ImageType * inputImage = threshFilter->GetOutput();
+        // CLOSING (for circles)
+        //const ImageType::Pointer inputImage = close_on_2d_slices(threshFilter->GetOutput(), 1, 1);
+        const ImageType * inputImage = threshFilter->GetOutput();
 
         ImageType::RegionType inputRegion = inputImage->GetBufferedRegion();
         ImageType::SizeType size = inputRegion.GetSize();
@@ -2058,10 +3002,19 @@ int main(int argc, char ** argv)
         }
 
         //ImageType::Pointer image_ribs_only = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, std::atoi(argv[1]));
-        ImageType::Pointer image_ribs_only = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, std::atoi(argv[1]));
+        ImageType::Pointer image_ribs_only = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, std::atoi(argv[1]), false);
 
-        label_ribs(image_ribs_only, number_of_test_file, circles_list, std::atoi(argv[1]));
+        DuplicatorType::Pointer duplicator = DuplicatorType::New();
+        duplicator->SetInputImage(image_ribs_only);
+        duplicator->Update();
 
+
+        ImageType::Pointer image_ribs_cleaned = label_ribs_ccomponents(duplicator->GetOutput(), number_of_test_file);
+
+        //MY LABELING
+        ImageType::Pointer image_ribs_cleaned_non_labeled = find_ribs(image_ribs_cleaned, number_of_test_file, circles_list, std::atoi(argv[1]), true);
+
+        label_ribs(image_ribs_cleaned_non_labeled, image_ribs_cleaned, number_of_test_file, circles_list, std::atoi(argv[1]));
 
 
         //name_of_the_file = std::to_string(number_of_test_file) + "_otsu_circles.nii.gz";
