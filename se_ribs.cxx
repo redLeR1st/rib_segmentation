@@ -185,14 +185,13 @@ void corrigate_circles(std::vector<CirclesListType> &circles_list) {
     std::cerr << "AVG_Y " << av_y << std::endl;
     std::cerr << "AVG_RAD " << av_rad << std::endl;
 
-    int filter_size = 40;
-
     it = circles_list.begin();
     while (it != circles_list.end())
     {
 
         CirclesListType::const_iterator itCircles = (*it).begin();
 
+        // If the first circle is an outlayer we search for a better fitting circle 
         if (!circle_itersect((*itCircles)->GetObjectToParentTransform()->GetOffset()[0], (*itCircles)->GetObjectToParentTransform()->GetOffset()[1], (*itCircles)->GetRadius()[0],
             av_x, av_y, av_rad)) {
 
@@ -521,7 +520,7 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
         CastingFilterType;
     CastingFilterType::Pointer caster = CastingFilterType::New();
 
-    // Thresholding with Otsu
+    // Thresholding with Otsu same as vertebra
     using FilterType = itk::BinaryThresholdImageFilter< ImageType, ImageType >;
     FilterType::Pointer threshFilter = FilterType::New();
     threshFilter = FilterType::New();
@@ -581,7 +580,7 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
 
     short actual_pixel_intesity = 0;
 
-    int end = 80;               // Length of the search area
+    int end = 80;               // Length of the search area todo rename
     int width_of_the_mark = 20; // Width of the search area
 
     int x_c;
@@ -811,7 +810,7 @@ ImageType::Pointer add_images(ImageType::Pointer img1, ImageType::Pointer img2) 
 }
 
 /**
- * Draws a line on img
+ * Draws a line on img based on the circles positions
  * 
  * @param img iamge to draw a line
  * @param index z index of the line
@@ -848,7 +847,7 @@ void draw_line_for_vertebra(ImageType::Pointer img, ImageType::IndexType index, 
 }
 
 /**
- * Labels ribs by anathomical oreder based on the seed points and draws line betweem vertebras
+ * Labels ribs by anathomical oreder based on the seed points and draws line between vertebras
  *
  * @param ribs_only image to bel labeled
  * @param ribs_only_labeled image with the old non anathomical labels
@@ -885,6 +884,7 @@ void label_ribs(ImageType::Pointer ribs_only, ImageType::Pointer ribs_only_label
     neighborhoodConnected->SetLower(lowerThreshold);
     neighborhoodConnected->SetUpper(upperThreshold);
 
+    // Neighboring pixel
     ImageType::SizeType radius;
     radius[0] = 0;
     radius[1] = 0;
@@ -1147,6 +1147,7 @@ ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int numb
     std::vector<int> remove_vec;
     std::vector<Label_Princ> Label_Princ_vec;
 
+    // Iterate trought objects
     for (unsigned int n = 0; n < labelMap->GetNumberOfLabelObjects(); n++)
     {
         std::cout << "---------------------" << std::endl;
@@ -1163,7 +1164,7 @@ ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int numb
         }
         double val = labelObject->GetPrincipalMoments()[0];
 
-        // If the object's forst principal moment is smaller then 50 its probably not a rib
+        // If the object's first principal moment is higher then 50 its probably not a rib
         if (!(labelObject->GetPrincipalMoments()[0] < 50)) {
             remove_vec.push_back(label_no);
             std::cout << "The label " << label_no << " has been removed" << std::endl;
@@ -1183,8 +1184,6 @@ ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int numb
     LabelMapToLabelImageFilterType::Pointer labelImageConverter = LabelMapToLabelImageFilterType::New();
     labelImageConverter->SetInput(labelMap);
 
-    int num_of_ribs = 24;
-
     std::cout << "Objects removed: " << labelNumberBeforeFilters - labelMap->GetNumberOfLabelObjects() << std::endl;
     std::cout << "Num of labels before filter " << labelNumberBeforeFilters << std::endl;
     std::cout << "Num of labels after filter " << labelMap->GetNumberOfLabelObjects() << std::endl;
@@ -1195,9 +1194,10 @@ ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int numb
     std::cerr << "Num of labels after filter " << labelMap->GetNumberOfLabelObjects() << std::endl;
     std::cerr << "---------------------" << std::endl;
 
+    int num_of_ribs = 24;
 
     // If the number of the leftover objects is higher then 24 (number of the expected ribs) we apply more filtering for the non rib objects
-    // by remove the objects with too small principal values
+    // by remove the objects with too small first principal values by ordering them
     if (labelMap->GetNumberOfLabelObjects() > num_of_ribs) {
         
         std::cerr << "To much objects there!!!" << std::endl;
@@ -1210,7 +1210,7 @@ ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int numb
             
             Label_Princ temp;
             temp.label = label_no;
-            temp.princ_mom = labelObject->GetPrincipalMoments()[0];
+            temp.princ_mom = labelObject->GetPrincipalMoments()[0]; 
 
             Label_Princ_vec.push_back(temp);
         }
@@ -1471,7 +1471,7 @@ int main(int argc, char ** argv)
     // Writing out the spine (hopefully) with local corrigations of the circles *END*
 
     // Segmentation of the ribs
-    ImageType::Pointer image_ribs_only = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, false);
+    ImageType::Pointer image_ribs_only = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, false); // TODO RENAME
 
     DuplicatorType::Pointer duplicator = DuplicatorType::New();
     duplicator->SetInputImage(image_ribs_only);
