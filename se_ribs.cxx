@@ -74,6 +74,8 @@
 
 #include "itkLabelUniqueLabelMapFilter.h"
 
+#include "itkChangeLabelLabelMapFilter.h"
+
 using PixelType = short;
 
 using ImageType = itk::Image< PixelType, 3 >;
@@ -131,6 +133,9 @@ using I2LType_stat = itk::LabelImageToStatisticsLabelMapFilter<ImageType, Statis
 typedef itk::LabelImageToLabelMapFilter< ImageType, LabelMapType > LabelImageToLabelMapFilterType;
 
 using LabelMapToLabelImageFilterType = itk::LabelMapToLabelImageFilter<LabelMapType, ImageType>;
+
+
+using ChangeLabelLabelMapFilterType = itk::ChangeLabelLabelMapFilter<LabelMapType>;
 
 bool circle_itersect(double x1, double y1, double r1, double x2, double y2, double r2) {
     double distSq = (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
@@ -580,8 +585,8 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
 
     short actual_pixel_intesity = 0;
 
-    int end = 80;               // Length of the search area todo rename
-    int width_of_the_mark = 20; // Width of the search area
+    int length_of_the_mark = 80; // Length of the search area
+    int width_of_the_mark = 20;  // Width of the search area
 
     int x_c;
     int y_c;
@@ -613,7 +618,7 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
                 index3d[0] = x_c + offset_l_x - x; // x coordinate of the pixel to be test for pixel intensity
 
                 // if the searching is in the desired area then check for the pixel intensity
-                if (x == width_of_the_mark - 1 && y_c + end > y && y > y_c) {
+                if (x == width_of_the_mark - 1 && y_c + length_of_the_mark > y && y > y_c) {
                     pixelIntensity_l += image_to_process->GetPixel(index3d);
                 }
 
@@ -638,7 +643,7 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
                     image_to_process->SetPixel(index3d, -1);
                 }
                 else {
-                    if (y_c + end > y && y > y_c) {
+                    if (y_c + length_of_the_mark > y && y > y_c) {
                         image_to_process->SetPixel(index3d, -2);
                     }
                     else {
@@ -654,7 +659,7 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
                 index3d[0] = x_c + offset_r_x + x; // x coordinate of the pixel to be test for pixel intensity
 
                 // if the searching is in the desired area then check for the pixel intensity
-                if (x == width_of_the_mark - 1 && y_c + end > y && y > y_c) {
+                if (x == width_of_the_mark - 1 && y_c + length_of_the_mark > y && y > y_c) {
                     pixelIntensity_r += image_to_process->GetPixel(index3d);
                 }
                 
@@ -678,7 +683,7 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
                     image_to_process->SetPixel(index3d, -1);
                 }
                 else {
-                    if (y_c + end > y && y > y_c) {
+                    if (y_c + length_of_the_mark > y && y > y_c) {
                         image_to_process->SetPixel(index3d, -2);
                     }
                     else {
@@ -1088,32 +1093,32 @@ void write_hist(ScalarImageToHistogramGeneratorType::Pointer histogram, int numb
 }
 
 
-struct Label_Princ {
+struct Label_Value {
     int label;
-    double princ_mom;
+    double value;
 };
 
-struct by_princ_mom {
-    bool operator()(Label_Princ const &a, Label_Princ const &b) const noexcept {
-        return a.princ_mom < b.princ_mom;
+struct by_value {
+    bool operator()(Label_Value const &a, Label_Value const &b) const noexcept {
+        return a.value < b.value;
     }
 };
 
 /** 
- * Labels the image containing the ribs based on its connectivity, and removes non rib objects based on their attributes
+ * Labels the image containing the ribs, based on its connectivity, and removes non rib objects based on their attributes
  *
  * @param ribs_only segmented images contains the result of the reginog growing
  * @param number_of_test_file key number of the image
  *
  * @return labeled image by conncentedCompontes algorithm
  */
-ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int number_of_test_file) {
+LabelMapType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs, int number_of_test_file) {
 
     ImageType::Pointer ret_val;
 
     ConnectedComponentImageFilterType::Pointer connected = ConnectedComponentImageFilterType::New();
 
-    connected->SetInput(ribs_only);
+    connected->SetInput(ribs);
     connected->Update();
 
     std::cout << "Number of objects: " << connected->GetObjectCount() << std::endl;
@@ -1140,12 +1145,12 @@ ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int numb
     i2l->SetComputePerimeter(false);
     i2l->Update();
 
-    LabelMapType * labelMap = i2l->GetOutput();
+    LabelMapType::Pointer labelMap = i2l->GetOutput();
 
     int labelNumberBeforeFilters = labelMap->GetNumberOfLabelObjects();
 
     std::vector<int> remove_vec;
-    std::vector<Label_Princ> Label_Princ_vec;
+    std::vector<Label_Value> Label_Princ_vec;
 
     // Iterate trought objects
     for (unsigned int n = 0; n < labelMap->GetNumberOfLabelObjects(); n++)
@@ -1208,14 +1213,14 @@ ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int numb
             int label_no = itk::NumericTraits<LabelMapType::LabelType>::PrintType(labelObject->GetLabel());
             //std::cout << "Label: " << label_no << std::endl;
             
-            Label_Princ temp;
+            Label_Value temp;
             temp.label = label_no;
-            temp.princ_mom = labelObject->GetPrincipalMoments()[0]; 
+            temp.value = labelObject->GetPrincipalMoments()[0]; 
 
             Label_Princ_vec.push_back(temp);
         }
         int num_of_labels = labelMap->GetNumberOfLabelObjects();
-        std::sort(Label_Princ_vec.begin(), Label_Princ_vec.end(), by_princ_mom());
+        std::sort(Label_Princ_vec.begin(), Label_Princ_vec.end(), by_value());
 
         for (int i = 0; i < num_of_labels - num_of_ribs; i++) {
             std::cout << " LABEL: " << Label_Princ_vec[i].label << std::endl;
@@ -1259,13 +1264,159 @@ ImageType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs_only, int numb
         std::cerr << err << std::endl;
     }
 
-    return ret_val;
+    return labelMap;
 }
+
+
+/**
+* Relabels the image, based on the object's centroid point's X cordinate and the top of the bounding box.
+* If the object's bounding box's top is higher, the object will get higher label.
+* This function also draws lines for verebras based on the tob of the ribs bounding boxes
+*
+* @param image_ribs_cleaned labeled image containing ribs only
+* @param number_of_test_file key number of the image
+*
+*/
+void label_ribs_in_order(LabelMapType::Pointer image_ribs_only, int number_of_test_file, std::vector<CirclesListType> circles_list) {
+
+    std::vector<Label_Value> label_centroid_z_l;
+    std::vector<Label_Value> label_centroid_z_r;
+    for (unsigned int n = 0; n < image_ribs_only->GetNumberOfLabelObjects(); n++)
+    {
+        ShapeLabelObjectType * labelObject = image_ribs_only->GetNthLabelObject(n);
+        int label_no = itk::NumericTraits<LabelMapType::LabelType>::PrintType(labelObject->GetLabel());
+
+        if (labelObject->GetCentroid()[0] < 0) {
+            Label_Value temp;
+            temp.label = label_no;
+            temp.value = labelObject->GetBoundingBox().GetIndex()[2] + labelObject->GetBoundingBox().GetSize()[2];
+
+            label_centroid_z_l.push_back(temp);
+        }
+        else if (labelObject->GetCentroid()[0] > 0) {
+            Label_Value temp;
+            temp.label = label_no;
+            temp.value = labelObject->GetBoundingBox().GetIndex()[2] + labelObject->GetBoundingBox().GetSize()[2];
+
+            label_centroid_z_r.push_back(temp);
+        }
+    }
+
+    std::sort(label_centroid_z_l.begin(), label_centroid_z_l.end(), by_value());
+    std::sort(label_centroid_z_r.begin(), label_centroid_z_r.end(), by_value());
+
+
+    ChangeLabelLabelMapFilterType::Pointer changeLabelFilter = ChangeLabelLabelMapFilterType::New();
+
+
+    changeLabelFilter->SetInput(image_ribs_only);
+
+    typedef unsigned short us;
+
+    std::map <us, us> label_map;
+
+    us label_no = 1;
+    for (auto it = label_centroid_z_l.begin(); it < label_centroid_z_l.end(); it++) {
+        us old_label = it->label;
+
+        // If the space between tow ribs is bigger then the space between the previous rib pairs by 5 (threshold) we skip a label by increment it
+        if (it >= label_centroid_z_l.begin() + 3 && (it->value - (it - 1)->value) - ((it - 1)->value - (it - 2)->value) > 5) {
+            label_no += 2;
+        }
+
+        label_map.insert(std::make_pair(old_label, label_no));
+        label_no += 2;
+    }
+
+    label_no = 2;
+    for (auto it = label_centroid_z_r.begin(); it < label_centroid_z_r.end(); it++) {
+        us old_label = it->label;
+
+        // If the space between tow ribs is bigger then the space between the previous rib pairs by 5 (threshold) we skip a label by increment it
+        if (it >= label_centroid_z_r.begin() + 3 && (it->value - (it - 1)->value) - ((it - 1)->value - (it - 2)->value) > 5) {
+            label_no += 2;
+        }
+
+        label_map.insert(std::make_pair(old_label, label_no));
+        label_no += 2;
+    }
+
+    changeLabelFilter->SetChangeMap(label_map);
+    changeLabelFilter->Update();
+
+    LabelMapToLabelImageFilterType::Pointer labelImageConverter = LabelMapToLabelImageFilterType::New();
+    labelImageConverter->SetInput(changeLabelFilter->GetOutput());
+    labelImageConverter->Update();
+
+    using WriterTypeT = itk::ImageFileWriter< ImageType >;
+    WriterTypeT::Pointer writerT = WriterTypeT::New();
+
+
+    std::string name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_mylabel_bb.nii.gz";
+
+    writerT->SetInput(labelImageConverter->GetOutput());
+    writerT->SetFileName(name_of_the_file);
+
+    try
+    {
+        writerT->Update();
+    }
+    catch (itk::ExceptionObject & err)
+    {
+        std::cerr << "ExceptionObject caught !" << std::endl;
+        std::cerr << err << std::endl;
+    }
+
+
+    DuplicatorType::Pointer duplicator = DuplicatorType::New();
+    duplicator->SetInputImage(labelImageConverter->GetOutput());
+    duplicator->Update();
+
+    ImageType::Pointer vertebra_lines = duplicator->GetOutput(); // Result: will contain the lines between the vertebras
+    vertebra_lines->FillBuffer(0);
+
+    int end = label_centroid_z_l.size() > label_centroid_z_r.size() ? label_centroid_z_l.size() : label_centroid_z_r.size();
+
+    for (int i = 0; i < end; i++) {
+        int avg = 0;
+        if (i < label_centroid_z_l.size() && i < label_centroid_z_r.size()) {
+            avg = (label_centroid_z_l[i].value + label_centroid_z_r[i].value) / 2;
+        }
+        else if (i < label_centroid_z_l.size()) {
+            avg = label_centroid_z_l[i].value;
+        }
+        else if (i < label_centroid_z_r.size()) {
+            avg = label_centroid_z_r[i].value;
+        }
+    
+        ImageType::IndexType index;
+        index[2] = avg;
+
+        draw_line_for_vertebra(vertebra_lines, index, circles_list);
+    }
+
+
+    name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_vert_line_bb.nii.gz";
+
+    writerT->SetInput(vertebra_lines);
+    writerT->SetFileName(name_of_the_file);
+
+    try
+    {
+        writerT->Update();
+    }
+    catch (itk::ExceptionObject & err)
+    {
+        std::cerr << "ExceptionObject caught !" << std::endl;
+        std::cerr << err << std::endl;
+    }
+}
+
 
 int main(int argc, char ** argv)
 {
     std::string file;
-    
+
     if (argv[1] != nullptr) {
         file = argv[1];
     }
@@ -1353,7 +1504,7 @@ int main(int argc, char ** argv)
     threshFilter->SetInsideValue(1);
     threshFilter->Update();
     // Thresholding the image based on the histogram normalized before *END*
-        
+
     // Calculating the circles on the axial slices *circles_list* will conatin the lists of circles for axial slices *START*
     const ImageType * inputImage = threshFilter->GetOutput();
 
@@ -1410,7 +1561,7 @@ int main(int argc, char ** argv)
     }
     // If there is an axial slice contains zero circles, we go to the next image *END*
 
-        
+
     // Writing out the spine (hopefully) without corrigation *START*
     // Draws the circles on input iamge
     draw_circle(reader_original->GetOutput(), circles_list);
@@ -1471,23 +1622,23 @@ int main(int argc, char ** argv)
     // Writing out the spine (hopefully) with local corrigations of the circles *END*
 
     // Segmentation of the ribs
-    ImageType::Pointer image_ribs_only = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, false); // TODO RENAME
+    ImageType::Pointer image_ribs_with_other_objects = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, false);
 
     DuplicatorType::Pointer duplicator = DuplicatorType::New();
-    duplicator->SetInputImage(image_ribs_only);
+    duplicator->SetInputImage(image_ribs_with_other_objects);
     duplicator->Update();
 
     // Remove non rib shaped objects
-    ImageType::Pointer image_ribs_cleaned = label_ribs_ccomponents(duplicator->GetOutput(), number_of_test_file);
+    LabelMapType::Pointer image_ribs_only = label_ribs_ccomponents(duplicator->GetOutput(), number_of_test_file);
 
-    //MY LABELING
-    ImageType::Pointer image_ribs_cleaned_non_labeled = find_ribs(image_ribs_cleaned, number_of_test_file, circles_list, true);
+    // LABELING BASED ON OBJECTS
+    label_ribs_in_order(image_ribs_only, number_of_test_file, circles_list);
 
-    label_ribs(image_ribs_cleaned_non_labeled, image_ribs_cleaned, number_of_test_file, circles_list);
-    // Cleaning and labeling the ribs *END*
-
-
-    number_of_test_file++;
+    ////MY LABELING
+    //ImageType::Pointer image_ribs_cleaned_non_labeled = find_ribs(image_ribs_cleaned, number_of_test_file, circles_list, true);
+    //
+    //label_ribs(image_ribs_cleaned_non_labeled, image_ribs_cleaned, number_of_test_file, circles_list);
+    //// Cleaning and labeling the ribs *END*
 
 
     return EXIT_SUCCESS;
