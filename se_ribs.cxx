@@ -509,11 +509,10 @@ std::vector<ImageType::IndexType> seed_vec_global_r;
  * @param reader_ribs image to search ribs for if @param is_cleaned_from_non_ribs is true this image should be the segmented and cleand image containing only ribs
  * @param number_of_test_file key number of the image
  * @param circles_list list of the circles
- * @param is_cleaned_from_non_ribs there if true we search seed points for labeling else we search seed points for region growing
  *
  * @return segmented image contains only the ribs
  */
-ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_file, std::vector<CirclesListType> circles_list, bool is_cleaned_from_non_ribs) {
+ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_file, std::vector<CirclesListType> circles_list) {
     seed_vec_global_l.clear();
     seed_vec_global_r.clear();
 
@@ -531,22 +530,20 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
     threshFilter = FilterType::New();
     threshFilter->SetInput(reader_ribs);
     
-    if (!is_cleaned_from_non_ribs) {
-        // RIB SEARCH
-        std::cout << "Thresholding for ribs" << std::endl;
+
+    // RIB SEARCH
+    std::cout << "Thresholding for ribs" << std::endl;
 
 
-        OtsuFilterType::ThresholdVectorType thresholds;
-        thresholds = otusHist(normalize(reader_ribs));
-        for (unsigned int i = 0; i < thresholds.size(); i++)
-        {
-            std::cout << thresholds[i] << std::endl;
-        }
-        threshFilter->SetLowerThreshold(thresholds[0]);
+    OtsuFilterType::ThresholdVectorType thresholds;
+    thresholds = otusHist(normalize(reader_ribs));
+    for (unsigned int i = 0; i < thresholds.size(); i++)
+    {
+        std::cout << thresholds[i] << std::endl;
     }
-    else {
-        threshFilter->SetLowerThreshold(1);
-    }
+    threshFilter->SetLowerThreshold(thresholds[0]);
+    
+
     threshFilter->SetUpperThreshold(10000);
     threshFilter->SetOutsideValue(0);
     threshFilter->SetInsideValue(1);
@@ -564,9 +561,9 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
     writerT->SetInput(image_to_process);
     try
     {
-        if (!is_cleaned_from_non_ribs) {
-            writerT->Update();
-        }
+       
+         writerT->Update();
+        
     }
     catch (itk::ExceptionObject & err)
     {
@@ -695,35 +692,21 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
 
 
             }
-            if (!is_cleaned_from_non_ribs) {
-                // KEEP ALL SEED POINT
-                // We can not decide if the seed point is belonging to a rib or not, tus we use all of them
-                for (int seed_ind = 0; seed_ind < seed_vec_l.size(); seed_ind++) {
-                    neighborhoodConnected->AddSeed(seed_vec_l[seed_ind]);
-                    seed_vec_global_l.push_back(seed_vec_l[seed_ind]);
-                }
-                seed_vec_l.clear();
-                
-                for (int seed_ind = 0; seed_ind < seed_vec_r.size(); seed_ind++) {
-                    neighborhoodConnected->AddSeed(seed_vec_r[seed_ind]);
-                    seed_vec_global_r.push_back(seed_vec_r[seed_ind]);
-                }
-                seed_vec_r.clear();
+            
+            // KEEP ALL SEED POINT
+            // We can not decide if the seed point is belonging to a rib or not, tus we use all of them
+            for (int seed_ind = 0; seed_ind < seed_vec_l.size(); seed_ind++) {
+                neighborhoodConnected->AddSeed(seed_vec_l[seed_ind]);
+                seed_vec_global_l.push_back(seed_vec_l[seed_ind]);
             }
-            else {
-                // KEEP ONLY THE FIRST SEED POINT
-                // We know that the seed point is belonging to a rib so we keep only the first one
-                if (!seed_vec_l.empty()) {
-                    neighborhoodConnected->AddSeed(seed_vec_l[0]);
-                    seed_vec_global_l.push_back(seed_vec_l[0]);
-                    seed_vec_l.clear();
-                }
-                if (!seed_vec_r.empty()) {
-                    neighborhoodConnected->AddSeed(seed_vec_r[0]);
-                    seed_vec_global_r.push_back(seed_vec_r[0]);
-                    seed_vec_r.clear();
-                }
+            seed_vec_l.clear();
+            
+            for (int seed_ind = 0; seed_ind < seed_vec_r.size(); seed_ind++) {
+                neighborhoodConnected->AddSeed(seed_vec_r[seed_ind]);
+                seed_vec_global_r.push_back(seed_vec_r[seed_ind]);
             }
+            seed_vec_r.clear();
+            
         }
 
         pixelIntensity_l = 0;
@@ -737,9 +720,9 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
     writerT->SetInput(image_to_process);
     try
     {
-        if (!is_cleaned_from_non_ribs) {
-            writerT->Update();
-        }
+
+        writerT->Update();
+        
     }
     catch (itk::ExceptionObject & err)
     {
@@ -770,11 +753,11 @@ ImageType::Pointer find_ribs(ImageType::Pointer reader_ribs, int number_of_test_
     name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow.nii.gz";
 
     try {
-        if (!is_cleaned_from_non_ribs) {
-            writerT->SetFileName(name_of_the_file);
-            writerT->SetInput(caster->GetOutput());
-            writerT->Update();
-        }
+        
+        writerT->SetFileName(name_of_the_file);
+        writerT->SetInput(caster->GetOutput());
+        writerT->Update();
+        
     }
     catch (itk::ExceptionObject & err)
     {
@@ -848,167 +831,6 @@ void draw_line_for_vertebra(ImageType::Pointer img, ImageType::IndexType index, 
             index3d[1] = y;
             img->SetPixel(index3d, pixelIntensity);
         }
-    }
-}
-
-/**
- * Labels ribs by anathomical oreder based on the seed points and draws line between vertebras
- *
- * @param ribs_only image to bel labeled
- * @param ribs_only_labeled image with the old non anathomical labels
- * @param number_of_test_file 
- * @param number_of_test_file key number of the image
- * @param circles_list list of the circles for line drawing
- */
-void label_ribs(ImageType::Pointer ribs_only, ImageType::Pointer ribs_only_labeled, int number_of_test_file, std::vector<CirclesListType> circles_list) {
-    std::vector<ImageType::IndexType> optimal_seed_vec_l;
-    std::vector<ImageType::IndexType> optimal_seed_vec_r;
-
-    std::vector<ImageType::IndexType> vertebra_lines_vec_l;
-    std::vector<ImageType::IndexType> vertebra_lines_vec_r;
-
-    using WriterTypeT = itk::ImageFileWriter< ImageType >;
-    WriterTypeT::Pointer writerT = WriterTypeT::New();
-    ConnectedFilterType::Pointer neighborhoodConnected = ConnectedFilterType::New();
-
-    DuplicatorType::Pointer duplicator = DuplicatorType::New();
-    duplicator->SetInputImage(ribs_only);
-    duplicator->Update();
-
-    ImageType::Pointer ribs_labeled = duplicator->GetOutput(); // Result: will contain the labeled ribs
-    ribs_labeled->FillBuffer(0);
-
-    duplicator->SetInputImage(ribs_labeled);
-    duplicator->Update();
-
-    ImageType::Pointer vertebra_lines = duplicator->GetOutput(); // Result: will contain the lines between the vertebras
-
-    const PixelType lowerThreshold = 20;
-    const PixelType upperThreshold = 20;
-
-    neighborhoodConnected->SetLower(lowerThreshold);
-    neighborhoodConnected->SetUpper(upperThreshold);
-
-    // Neighboring pixel
-    ImageType::SizeType radius;
-    radius[0] = 0;
-    radius[1] = 0;
-    radius[2] = 0;
-    neighborhoodConnected->SetRadius(radius);
-
-    neighborhoodConnected->SetInput(ribs_only);
-
-    int is_lapocka = false;
-    int ind_l = 1;
-    int ind_r = 2;
-
-    std::set<int> added_label_values; // Used labels
-
-    // LEFT
-    for (int i = 0; i < seed_vec_global_l.size(); i++) {
-        int j = 0;
-
-        // The loop ends when the z coordinate between two seed points is not 1
-        while (i + j < seed_vec_global_l.size() - 1 && ((seed_vec_global_l[i + j + 1].GetIndex()[2] - seed_vec_global_l[i + j].GetIndex()[2]) == 1) && std::abs(seed_vec_global_l[i + j + 1].GetIndex()[1] - seed_vec_global_l[i + j].GetIndex()[1]) < 19) {
-            j++;
-        }
-
-        int begin = i;
-        int end = i + j;
-
-        // End index is the line betwweem the vertebra
-        vertebra_lines_vec_l.push_back(seed_vec_global_l[end]);
-
-        // We add every seed points corresponding to a label
-        for (int seed_i = begin; seed_i <= end; seed_i++) {
-            neighborhoodConnected->AddSeed(seed_vec_global_l[seed_i]);        
-        }
-
-        neighborhoodConnected->AddSeed(seed_vec_global_l[begin]);
-        
-        if (added_label_values.find(ribs_only_labeled->GetPixel(seed_vec_global_l[begin])) == added_label_values.end()) {   
-            neighborhoodConnected->SetReplaceValue(ind_l);
-            neighborhoodConnected->Update();
-
-            ribs_labeled = add_images(ribs_labeled, neighborhoodConnected->GetOutput());
-            ind_l += 2;
-            added_label_values.insert(ribs_only_labeled->GetPixel(seed_vec_global_l[begin]));
-        }
-        neighborhoodConnected->ClearSeeds();
-        i = i + j;
-    }
-
-    neighborhoodConnected->ClearSeeds();
-    
-    // RIGHT
-    for (int i = 0; i < seed_vec_global_r.size(); i++) {
-        int j = 0;
-
-        // The loop ends when the z coordinate between two seed points is not 1
-        while (i + j < seed_vec_global_r.size() - 1 && ((seed_vec_global_r[i + j + 1].GetIndex()[2] - seed_vec_global_r[i + j].GetIndex()[2]) == 1) && std::abs(seed_vec_global_r[i + j + 1].GetIndex()[1] - seed_vec_global_r[i + j].GetIndex()[1]) < 19) {
-            j++;
-        }
-
-        int begin = i;
-        int end = i + j;
-
-        // End index is the line betwweem the vertebra
-        vertebra_lines_vec_r.push_back(seed_vec_global_r[end]);
-            
-        // We add every seed points corresponding to a label
-        for (int seed_i = begin; seed_i <= end; seed_i++) {
-            neighborhoodConnected->AddSeed(seed_vec_global_r[seed_i]);
-        }
-
-        neighborhoodConnected->AddSeed(seed_vec_global_r[begin]);
-
-        if (added_label_values.find(ribs_only_labeled->GetPixel(seed_vec_global_r[begin])) == added_label_values.end()) {
-            neighborhoodConnected->SetReplaceValue(ind_r);
-            neighborhoodConnected->Update();
-
-            ribs_labeled = add_images(ribs_labeled, neighborhoodConnected->GetOutput());
-            ind_r += 2;
-            added_label_values.insert(ribs_only_labeled->GetPixel(seed_vec_global_r[begin]));
-        }
-        neighborhoodConnected->ClearSeeds();
-        i = i + j;
-    }
-
-    // LINE DRAWING
-    for (int i = 0; i < vertebra_lines_vec_l.size(); i++) {
-         
-        int avg = std::ceil((vertebra_lines_vec_l[i][2] + vertebra_lines_vec_r[i][2])/2);
-        ImageType::IndexType index;
-        index[2] = avg;
-
-        draw_line_for_vertebra(vertebra_lines, index, circles_list);
-    }
-
-    // Writing output
-    std::string name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_mylabel.nii.gz";
-    writerT->SetFileName(name_of_the_file);
-    writerT->SetInput(ribs_labeled);
-    try
-    {
-        writerT->Update();
-    }
-    catch (itk::ExceptionObject & err)
-    {
-        std::cerr << "ExceptionObject caught !" << std::endl;
-        std::cerr << err << std::endl;
-    }
-
-    name_of_the_file = std::to_string(number_of_test_file) + "_reg_grow_vert_line.nii.gz";
-    writerT->SetFileName(name_of_the_file);
-    writerT->SetInput(vertebra_lines);
-    try
-    {
-        writerT->Update();
-    }
-    catch (itk::ExceptionObject & err)
-    {
-        std::cerr << "ExceptionObject caught !" << std::endl;
-        std::cerr << err << std::endl;
     }
 }
 
@@ -1271,7 +1093,7 @@ LabelMapType::Pointer label_ribs_ccomponents(ImageType::Pointer ribs, int number
 /**
 * Relabels the image, based on the object's centroid point's X cordinate and the top of the bounding box.
 * If the object's bounding box's top is higher, the object will get higher label.
-* This function also draws lines for verebras based on the tob of the ribs bounding boxes
+* This function also draws lines for verebras based on the top of the ribs bounding boxes.
 *
 * @param image_ribs_cleaned labeled image containing ribs only
 * @param number_of_test_file key number of the image
@@ -1622,7 +1444,7 @@ int main(int argc, char ** argv)
     // Writing out the spine (hopefully) with local corrigations of the circles *END*
 
     // Segmentation of the ribs
-    ImageType::Pointer image_ribs_with_other_objects = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list, false);
+    ImageType::Pointer image_ribs_with_other_objects = find_ribs(reader_ribs->GetOutput(), number_of_test_file, circles_list);
 
     DuplicatorType::Pointer duplicator = DuplicatorType::New();
     duplicator->SetInputImage(image_ribs_with_other_objects);
@@ -1633,13 +1455,6 @@ int main(int argc, char ** argv)
 
     // LABELING BASED ON OBJECTS
     label_ribs_in_order(image_ribs_only, number_of_test_file, circles_list);
-
-    ////MY LABELING
-    //ImageType::Pointer image_ribs_cleaned_non_labeled = find_ribs(image_ribs_cleaned, number_of_test_file, circles_list, true);
-    //
-    //label_ribs(image_ribs_cleaned_non_labeled, image_ribs_cleaned, number_of_test_file, circles_list);
-    //// Cleaning and labeling the ribs *END*
-
 
     return EXIT_SUCCESS;
 }
